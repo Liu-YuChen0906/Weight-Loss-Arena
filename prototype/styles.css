@@ -68,3 +68,13 @@
 .group-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}.group-value{min-width:0}.group-value-name{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.group-value-name i{width:14px;height:3px;border-radius:2px;flex-shrink:0}.group-value strong{display:block;margin-top:4px;font-size:20px;font-weight:600}.group-value strong small{margin-left:4px;font-size:12px;font-weight:400}
 
 .intensity-options{grid-template-columns:repeat(4,minmax(0,1fr))}
+
+/* 创建表单：增强输入与可选项的可见边界。 */
+.create-page #roomName,.create-page textarea{border-color:#d5c5c1;background:#fffaf8;box-shadow:inset 0 1px 2px #58362d05;transition:border-color .15s,box-shadow .15s,background .15s}
+.create-page #roomName::placeholder,.create-page textarea::placeholder{color:#8c8180;opacity:1}
+.create-page .period-choice,.create-page .choice{border-color:#d5c5c1;background:#fffaf8;transition:border-color .15s,background .15s,box-shadow .15s}
+.create-page .choice small{color:#817471}
+.create-page .period-choice.active,.create-page .choice.active{border-color:var(--green);background:#fff0ec;box-shadow:inset 0 0 0 1px var(--green)}
+.create-page #roomName:focus,.create-page textarea:focus{border-color:var(--green);background:#fff;box-shadow:0 0 0 3px #e25b491a}
+.create-page .period-choice:focus-visible,.create-page .choice:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+@media(hover:hover){.create-page .period-choice:hover,.create-page .choice:hover{border-color:#c9887b;background:#fff4f0}}
