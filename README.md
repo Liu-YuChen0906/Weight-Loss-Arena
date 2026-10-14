@@ -38,6 +38,14 @@ node --test tests/*.test.mjs
 
 测试临时库相互隔离，不修改应用数据。HTTP 集成测试临时监听本机随机端口；受限环境需要允许本机端口。GitHub Actions 配置已写入，尚未在远端执行。
 
+可选的浏览器异常流程验收使用已安装的 Playwright 与 Chrome，不属于正式应用运行依赖。脚本只创建内存数据库与独立无头浏览器，覆盖断网、响应丢失、两会话修改冲突、跨日、会话撤销及响应式布局，不操作 `var/development.sqlite`。本机命令：
+
+```sh
+PLAYWRIGHT_MODULE_PATH=/Users/liuyuchen/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs /Users/liuyuchen/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node scripts/browser-check.mjs
+```
+
+普通已安装 Playwright 的环境可直接执行 `node scripts/browser-check.mjs`；需要允许本机随机端口与 Chrome 启动。它不在默认 CI 中运行，也不等于手机实机验证。
+
 ## 结构
 
 | 路径 | 职责 |

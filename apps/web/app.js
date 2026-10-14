@@ -1,4 +1,5 @@
 import { calculateGoal, round2 } from '/packages/domain/index.mjs';
+import { createRequester } from '/request.mjs';
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (label, act, cls = '', attrs = '') => `<button type="button" class="${cls}" data-act="${act}" ${attrs}>${label}</button>`;
@@ -12,22 +13,22 @@ const routePage = () => location.hash.slice(1).split('?')[0] || 'home';
 const routeRoom = () => new URLSearchParams(location.hash.split('?')[1] || '').get('room');
 let page = routePage();
 const pendingKeys = new Map();
+const request = createRequester({ pendingKeys });
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => $('#toast').classList.remove('show'), 4200); }
-function clearPrivate() { epoch++; data = null; invite = null; recordKg = null; recordDate = ''; pendingKeys.clear(); closeModal(); }
+function resetRecord() { recordKg = null; recordDate = ''; recordVersion = 0; savePayload = null; uncertainRecord = null; }
+function clearPrivate() { epoch++; data = null; invite = null; resetRecord(); preparedPayload = null; startPayload = null; pendingKeys.clear(); closeModal(); }
 async function api(path, method = 'GET', body, options = {}) {
-  const payload = body === undefined ? undefined : JSON.stringify(body), signature = method + path + payload;
+  const generation = epoch;
   const headers = { 'Content-Type': 'application/json', 'X-App-Request': '1' };
   if (user?.csrf) headers['X-CSRF-Token'] = user.csrf;
-  if (method !== 'GET') { if (!pendingKeys.has(signature)) pendingKeys.set(signature, crypto.randomUUID()); headers['Idempotency-Key'] = pendingKeys.get(signature); }
-  let response;
-  try { response = await fetch('/api/v1' + path, { method, headers, body: payload, cache: 'no-store', signal: AbortSignal.timeout(12000) }); }
-  catch { const e = new Error(method === 'GET' ? '连接失败，请重试' : '尚未确认保存结果，请恢复连接后核对再重试'); e.code = 'NETWORK'; throw e; }
-  const result = await response.json();
-  if (response.ok) { pendingKeys.delete(signature); return result; }
-  pendingKeys.delete(signature);
-  if (response.status === 401 && !options.allowAnonymous) { user = null; clearPrivate(); nextPage = page; navigate('login'); }
-  if (result.error?.code === 'CSRF_REJECTED' && user) { clearPrivate(); navigate('home'); }
-  const e = new Error(result.error?.message || '请求失败'); e.code = result.error?.code; e.details = result.error?.details; throw e;
+  const stale = () => Object.assign(new Error('会话已变化，请重新操作'), { code: 'STALE_SESSION' });
+  try { const result = await request(path, method, body, headers); if (generation !== epoch) throw stale(); return result; }
+  catch (e) {
+    if (generation !== epoch) throw stale();
+    if (e.status === 401 && !options.allowAnonymous) { user = null; clearPrivate(); nextPage = page; navigate('login'); }
+    if (e.code === 'CSRF_REJECTED' && user) { user = null; clearPrivate(); nextPage = 'home'; navigate('login'); }
+    throw e;
+  }
 }
 function navigate(target) { closeModal(); page = target; const inRoom = ['lobby', 'group', 'record', 'data'].includes(target) || target.startsWith('analysis/'); const hash = target + (inRoom && room() ? '?room=' + room().id : ''); if (location.hash.slice(1) !== hash) location.hash = hash; render(); window.scrollTo(0, 0); }
 const room = () => data?.room;
@@ -123,7 +124,7 @@ function recordPage() {
   if (room().status !== 'ACTIVE') return `${head('记录体重')}<section class="card empty"><h2>${room().status === 'ENDED' ? '本期已结束' : '本期尚未开始'}</h2>${btn('返回小组', 'go:group', 'soft')}</section>`;
   const m = mine(), factor = unit === 'jin' ? 2 : 1;
   if (!recordDate) { recordDate = today; const old = m.records.find(r => r.date === today); recordKg = old?.weight ?? null; recordVersion = old?.version ?? 0; }
-  return `<div class="form-shell">${head('记录体重')}<form class="card record-form" data-form="record"><div class="weight-entry"><div class="unit-toggle" data-unit="${unit}" role="group" aria-label="体重单位"><span class="unit-toggle-thumb" aria-hidden="true"><span></span></span>${button('公斤', 'unit:kg', unit === 'kg' ? 'active' : '', `aria-pressed="${unit === 'kg'}"`)}${button('斤', 'unit:jin', unit === 'jin' ? 'active' : '', `aria-pressed="${unit === 'jin'}"`)}</div><div class="entry-line"><input name="weight" class="record-input" type="text" inputmode="decimal" autocomplete="off" placeholder="00.00" aria-label="体重" value="${recordKg == null ? '' : (recordKg * factor).toFixed(2)}"><span data-weight-unit>${unit === 'jin' ? '斤' : '公斤'}</span></div><p id="form-error" class="error" role="alert"></p></div><section class="record-target"><div class="target-heading"><h3>本期目标</h3><span class="target-period">${room().days} 天</span></div><div class="target-reading"><strong data-target-weight>${(m.target * factor).toFixed(2)}</strong><span data-target-unit>${unit === 'jin' ? '斤' : '公斤'}</span></div><div class="target-meta">${esc(room().intensity)}强度</div></section><div class="record-save"><button type="submit" class="btn full">保存记录</button></div></form></div>`;
+  return `<div class="form-shell">${head('记录体重')}<form class="card record-form" data-form="record"><div class="weight-entry"><div class="unit-toggle" data-unit="${unit}" role="group" aria-label="体重单位"><span class="unit-toggle-thumb" aria-hidden="true"><span></span></span>${button('公斤', 'unit:kg', unit === 'kg' ? 'active' : '', `aria-pressed="${unit === 'kg'}"`)}${button('斤', 'unit:jin', unit === 'jin' ? 'active' : '', `aria-pressed="${unit === 'jin'}"`)}</div><div class="entry-line"><input name="weight" class="record-input" type="text" inputmode="decimal" autocomplete="off" placeholder="00.00" aria-label="体重" ${uncertainRecord ? 'readonly' : ''} value="${recordKg == null ? '' : (recordKg * factor).toFixed(2)}"><span data-weight-unit>${unit === 'jin' ? '斤' : '公斤'}</span></div><p id="form-error" class="error" role="alert">${uncertainRecord ? '尚未确认保存结果，请恢复连接后核对。' : ''}</p></div><section class="record-target"><div class="target-heading"><h3>本期目标</h3><span class="target-period">${room().days} 天</span></div><div class="target-reading"><strong data-target-weight>${(m.target * factor).toFixed(2)}</strong><span data-target-unit>${unit === 'jin' ? '斤' : '公斤'}</span></div><div class="target-meta">${esc(room().intensity)}强度</div></section><div class="record-save"><button type="submit" class="btn full">${uncertainRecord ? '核对保存结果' : '保存记录'}</button></div></form></div>`;
 }
 function switchRecordUnit(nextUnit) {
   const control = $('.record-form .unit-toggle');
@@ -174,8 +175,12 @@ async function refresh({ force = false, roomId } = {}) {
   if (page === 'home' && previousCurrentRoomId !== user.currentRoomId) render();
   const selectedRoom = roomId || routeRoom() || room()?.id || user.currentRoomId;
   if (selectedRoom) {
-    const updated = await api(`/rooms/${selectedRoom}?range=${requestedRange}`); if (generation !== epoch || request !== viewRequest) return; delete updated.requestId;
+    let updated;
+    try { updated = await api(`/rooms/${selectedRoom}?range=${requestedRange}`); }
+    catch (e) { if (generation === epoch && request === viewRequest && e.code === 'FORBIDDEN') { clearPrivate(); navigate('home'); } throw e; }
+    if (generation !== epoch || request !== viewRequest) return; delete updated.requestId;
     const changed = !data || JSON.stringify(data) !== JSON.stringify(updated), oldStatus = room()?.status;
+    if (room() && room().id !== updated.room.id) resetRecord();
     data = updated; dataRange = requestedRange;
     if (page === 'lobby' && room().status !== 'LOBBY') { navigate('group'); return; }
     if (oldStatus === 'ACTIVE' && room().status === 'ENDED') { recordDate = ''; closeModal(); if (['lobby', 'group', 'record'].includes(page)) navigate('group'); else render(); return; }
@@ -184,7 +189,7 @@ async function refresh({ force = false, roomId } = {}) {
 }
 async function ensureUser(destination) { nextPage = destination; if (!user) { navigate('login'); return false; } if (!user.consent) { navigate('profile'); return false; } return true; }
 async function loadCurrent() { await refresh({ force: true, roomId: user.currentRoomId }); if (!room()) { navigate('home'); return; } navigate(room().status === 'LOBBY' ? 'lobby' : 'group'); }
-let editDraft = null, preparedPayload = null, startPayload = null, savePayload = null;
+let editDraft = null, preparedPayload = null, startPayload = null, savePayload = null, uncertainRecord = null;
 function preparationFields(values = {}) { return `<div class="compare preparation-fields">${field('身高 <small>cm</small>', 'height', values.height ?? '', 'type="text" inputmode="decimal" placeholder="如 175" required')}${field('起始体重 <small>kg</small>', 'weight', values.weight ?? '', 'type="text" inputmode="decimal" placeholder="如 80.00" required')}</div>`; }
 function editRoomModal() { modal('编辑小组', `<form id="edit-form" data-form="edit">${field('小组名称', 'name', editDraft.name, 'maxlength="24" placeholder="晚饭后散步小队"')}<label class="field"><span class="field-label">小组介绍</span><textarea name="intro" maxlength="200">${esc(editDraft.intro)}</textarea></label>${periodOptions(true)}<p class="sub">修改周期后，所有成员需重新确认目标。</p><p id="modal-error" class="error" role="alert"></p></form>`, '<button form="edit-form" type="submit" class="btn full">保存修改</button>' + button('取消', 'close', 'cancel'), true); }
 async function showReminders() {
@@ -194,7 +199,7 @@ async function showReminders() {
   $('#reminders').innerHTML = `<section class="notice reminder-notice">${result.reminders.map(r => `<p>${esc(r.nickname)}已连续 ${r.missingDays} 天未更新体重。</p>`).join('')}</section>`;
 }
 async function act(action, element) {
-  if (action.startsWith('go:')) { if (action === 'go:record') recordDate = ''; navigate(action.slice(3)); if (page === 'group') await showReminders(); return; }
+  if (action.startsWith('go:')) { if (action === 'go:record' && !uncertainRecord) recordDate = ''; navigate(action.slice(3)); if (page === 'group') await showReminders(); return; }
   if (action === 'close') { closeModal(); return; }
   if (action === 'point') { toast(element.dataset.label); return; }
   if (action === 'privacy') { modal('隐私与数据', '<p>身高用于计算本期目标，体重、目标和趋势用于记录与组内分析。未加入小组的人无法查看身体数据。新加入的成员可查看本期历史。</p><p>本地开发版本只在本机运行。短信尚未接入；请使用合成数据测试。开发数据保存在本机数据库，账号与支持中可取回本人数据或注销删除。正式保留期限、备份删除及支持时限将在开放试用前确定。</p><p>目标是产品挑战规则，不是医学建议；效果及难度公平性尚未验证。</p>'); return; }
@@ -241,7 +246,7 @@ async function act(action, element) {
   if (action.startsWith('details:')) { const m = data.members.find(m => m.id === action.split(':')[1]); modal('记录明细', `<div class="record-details-scroll">${m.summary.rows.length ? `<table class="record-list"><thead><tr><th>日期</th><th>体重 / kg</th></tr></thead><tbody>${m.summary.rows.slice().reverse().map(r => `<tr><td>${r.date}</td><td>${r.weight.toFixed(2)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">该区间还没有记录</div>'}</div>`, '', true); return; }
   if (action === 'new-period') { draft = { name: '', intro: '', days: 14, intensity: '低', custom: false }; clearPrivate(); navigate('create'); return; }
   if (action === 'history') { if (!await ensureUser('home')) return; const result = await api('/history'); modal('历史小组', result.rooms.length ? result.rooms.map(r => button(`<strong>${esc(r.name)}</strong><small>${r.startDate} · ${r.days} 天　›</small>`, 'history-room:' + r.id, 'settings-row')).join('') : '<div class="empty">还没有结束的小组</div>', '', true); return; }
-  if (action.startsWith('history-room:')) { const roomId = action.split(':')[1]; data = null; await refresh({ force: true, roomId }); navigate('group'); return; }
+  if (action.startsWith('history-room:')) { const roomId = action.split(':')[1]; resetRecord(); data = null; await refresh({ force: true, roomId }); navigate('group'); return; }
   if (action === 'account') { modal('账号与支持', `<p>${esc(user.nickname)} · ${esc(user.phone)}</p>${button('修改昵称与查看同意', 'profile', 'settings-row')}${button('取回本人数据', 'export', 'settings-row')}${button('提交支持请求', 'support', 'settings-row')}${button('我的支持请求', 'support-list', 'settings-row')}${button('退出登录', 'logout', 'settings-row')}${button('注销并删除数据', 'delete', 'settings-row')}`, '', true); return; }
   if (action === 'profile') { nextPage = 'home'; navigate('profile'); return; }
   if (action === 'export') { const result = await api('/me/export'); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })); link.download = '秤群结队-本人数据.json'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); return; }
@@ -251,9 +256,16 @@ async function act(action, element) {
   if (action === 'delete') { modal('注销并删除数据', '<form id="delete-form" data-form="delete"><p>将立即删除本人的账号、会话、准备和记录，其他成员无法再读取这些数据。此操作不可恢复。</p>' + field('输入「注销并删除我的数据」确认', 'confirm', '', 'autocomplete="off" required') + '<p id="modal-error" class="error"></p></form>', '<button class="btn full" type="submit" form="delete-form">确认注销</button>' + button('取消', 'close', 'cancel'), true); return; }
 }
 async function commitRecord() {
-  const result = await api(roomPath('/records'), 'PUT', savePayload);
+  const pending = uncertainRecord || { path: roomPath('/records'), body: { ...savePayload } };
+  let result;
+  try { result = await api(pending.path, 'PUT', pending.body); }
+  catch (e) { if (e.code === 'NETWORK') { uncertainRecord = pending; closeModal(); render(); } else if (e.code !== 'STALE_SESSION') uncertainRecord = null; throw e; }
+  uncertainRecord = null; savePayload = null;
   recordKg = result.weight; recordVersion = result.version; recordDate = result.date;
-  closeModal(); await refresh(); render(); toast('记录已保存');
+  const records = mine().records, old = records.findIndex(r => r.date === result.date);
+  if (old >= 0) records[old] = result; else { records.push(result); records.sort((a, b) => a.date.localeCompare(b.date)); }
+  closeModal(); render(); toast('记录已保存');
+  try { await refresh(); } catch (e) { if (e.code === 'NETWORK') toast('记录已保存，数据同步暂时中断'); else throw e; }
 }
 async function submit(form) {
   const values = Object.fromEntries(new FormData(form));
@@ -268,6 +280,7 @@ async function submit(form) {
   else if (form.dataset.form === 'prepare') { await api(roomPath('/preparation'), 'PUT', { height: Number(values.height), weight: Number(values.weight), version: preparedPayload.version }); closeModal(); await refresh({ force: true }); }
   else if (form.dataset.form === 'edit') { await api(roomPath(), 'PATCH', { ...editDraft, days: Number(editDraft.days) }); closeModal(); await refresh({ force: true }); }
   else if (form.dataset.form === 'record') {
+    if (uncertainRecord) { await commitRecord(); return; }
     const raw = values.weight.trim(); if (!raw || !Number.isFinite(Number(raw))) throw new Error('请输入有效体重');
     const kg = unit === 'jin' ? Number(raw) / 2 : Number(raw); if (kg < 20 || kg > 300) throw new Error('体重须在 20–300 kg 之间');
     recordKg = kg;
@@ -286,6 +299,7 @@ async function run(action) {
   const buttons = [...document.querySelectorAll('button:not(:disabled)')]; buttons.forEach(b => { b.disabled = true; b.dataset.busy = 'true'; });
   try { await action(); }
   catch (e) {
+    if (e.code === 'STALE_SESSION') return;
     const node = $('#modal-error') || $('#form-error'); if (node) node.textContent = e.message; toast(e.message);
     if (['VERSION_CONFLICT', 'PREVIEW_STALE', 'BUSINESS_DATE_CHANGED', 'INVITE_CHANGED', 'NETWORK'].includes(e.code)) {
       try { await refresh(); if (e.code === 'BUSINESS_DATE_CHANGED') { recordDate = today; recordVersion = mine()?.records.find(r => r.date === today)?.version || 0; closeModal(); render(); toast('已切换到今天，请核对日期与输入后重新保存'); } else if (e.code === 'VERSION_CONFLICT' && page === 'record') { recordVersion = mine().records.find(r => r.date === recordDate)?.version || 0; closeModal(); render(); } else if (e.code === 'INVITE_CHANGED') { invite = (await api('/invites/' + invite.code)).invite; closeModal(); render(); } else if (page === 'lobby') closeModal(); } catch { /* Keep draft visible when the connection is unavailable. */ }
@@ -325,7 +339,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Enter' && event.target.matches('circle[data-act]')) run(() => act('point', event.target));
   if (dialog && event.key === 'Tab') { const nodes = [...dialog.querySelectorAll('button:not(:disabled),input,textarea,a[href],[tabindex="0"]')], first = nodes[0], last = nodes.at(-1); if (!nodes.length) { event.preventDefault(); return; } if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { last.focus(); event.preventDefault(); } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { first.focus(); event.preventDefault(); } }
 });
-window.addEventListener('hashchange', () => { if (routePage() !== page || (routeRoom() && routeRoom() !== room()?.id)) { page = routePage(); closeModal(); if (routeRoom() && routeRoom() !== room()?.id) data = null; render(); if (user && (['lobby', 'group', 'data', 'record'].includes(page) || page.startsWith('analysis/'))) run(() => refresh({ force: true })); } });
+window.addEventListener('hashchange', () => { if (routePage() !== page || (routeRoom() && routeRoom() !== room()?.id)) { page = routePage(); closeModal(); if (routeRoom() && routeRoom() !== room()?.id) { resetRecord(); data = null; } render(); if (user && (['lobby', 'group', 'data', 'record'].includes(page) || page.startsWith('analysis/'))) run(() => refresh({ force: true })); } });
 window.addEventListener('pageshow', event => { if (event.persisted) boot(); });
 async function poll() {
   clearTimeout(timer);

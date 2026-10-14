@@ -7,7 +7,7 @@ import { openStore } from './store.mjs';
 import { createService } from './service.mjs';
 import { AppError, ensure } from '../../packages/contracts/index.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const staticFiles = { '/': ['apps/web/index.html', 'text/html'], '/app.js': ['apps/web/app.js', 'text/javascript'], '/styles.css': ['apps/web/styles.css', 'text/css'], '/packages/domain/index.mjs': ['packages/domain/index.mjs', 'text/javascript'], '/packages/contracts/index.mjs': ['packages/contracts/index.mjs', 'text/javascript'] };
+const staticFiles = { '/': ['apps/web/index.html', 'text/html'], '/app.js': ['apps/web/app.js', 'text/javascript'], '/request.mjs': ['apps/web/request.mjs', 'text/javascript'], '/styles.css': ['apps/web/styles.css', 'text/css'], '/packages/domain/index.mjs': ['packages/domain/index.mjs', 'text/javascript'], '/packages/contracts/index.mjs': ['packages/contracts/index.mjs', 'text/javascript'] };
 async function jsonBody(req) {
   ensure(req.headers['content-type']?.startsWith('application/json'), 'CONTENT_TYPE', '请使用 JSON 请求', 415);
   let raw = '';
@@ -41,6 +41,8 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
         ensure(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), 'CSRF_REJECTED', '请求来源无效', 403);
       }
       const body = write ? await jsonBody(req) : {}, key = req.headers['idempotency-key'];
+      // Reading a streamed body can cross midnight or the session/period deadline.
+      service.expire();
       const route = req.method + ' ' + url.pathname, ip = req.socket.remoteAddress || 'local';
       if (route === 'GET /api/v1/health') { send({ ok: true, storage: store.get('SELECT 1 ok').ok === 1, mode: smsMode }); return; }
       if (route === 'POST /api/v1/auth/code') { send(await service.requestCode(body, ip)); return; }
