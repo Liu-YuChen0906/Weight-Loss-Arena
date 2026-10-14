@@ -1,0 +1,5 @@
+{
+  "name": "chengqun-jiedui", "version": "0.1.0", "private": true, "type": "module",
+  "engines": { "node": ">=24.15.0 <25" },
+  "scripts": { "dev": "node --env-file-if-exists=.env --watch apps/api/server.mjs", "start": "node --env-file-if-exists=.env apps/api/server.mjs", "test": "node --test tests/*.test.mjs", "check": "node scripts/check.mjs", "support": "node --env-file-if-exists=.env scripts/support.mjs" }
+}

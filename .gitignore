@@ -1,3 +1,8 @@
 .DS_Store
 node_modules/
 .env
+var/
+coverage/
+test-results/
+.env.*
+!.env.example
