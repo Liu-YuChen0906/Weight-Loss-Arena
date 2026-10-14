@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Payathon test IP TLS certificate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/payathon-tools/certbot/bin/certbot renew --cert-name 101.132.150.197 --quiet
+TimeoutStartSec=20min

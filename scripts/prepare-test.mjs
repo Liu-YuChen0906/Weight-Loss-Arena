@@ -1,0 +1,11 @@
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { randomBytes, createHash } from 'node:crypto';
+const dir = resolve('var/test');
+mkdirSync(dir, { recursive: true, mode: 0o700 });
+const path = resolve(dir, 'accounts.json'), instructions = resolve(dir, '体验账号.md');
+if (existsSync(path) || existsSync(instructions)) throw new Error('Test accounts already exist; refusing to replace them.');
+const issued = Array.from({ length: 8 }, (_, i) => ({ id: 'tester-' + (i + 1), nickname: '测试成员' + (i + 1), code: randomBytes(18).toString('base64url') }));
+writeFileSync(path, JSON.stringify(issued.map(({ code, ...a }) => ({ ...a, codeHash: createHash('sha256').update(code).digest('hex') })), null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+writeFileSync(instructions, '# 联机测试体验账号\n\n每人使用一个体验码；同一码重新登录会回到同一账号。不要公开发布体验码，只填写合成数据。\n\n' + issued.map(a => `- ${a.nickname}：\`${a.code}\``).join('\n') + '\n', { mode: 0o600, flag: 'wx' });
+console.log('Issued 8 test identities. Private instructions: ' + instructions);

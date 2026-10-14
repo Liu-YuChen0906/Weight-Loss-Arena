@@ -1,0 +1,22 @@
+[Unit]
+Description=Payathon synthetic-data online test
+After=network.target
+
+[Service]
+Type=simple
+User=payathon-test
+Group=payathon-test
+WorkingDirectory=/opt/payathon-test/current
+EnvironmentFile=/etc/payathon-test/app.env
+ExecStart=/opt/payathon-tools/node-v24.19.0-linux-x64/bin/node apps/api/server.mjs
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/payathon-test
+
+[Install]
+WantedBy=multi-user.target

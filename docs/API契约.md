@@ -4,7 +4,9 @@
 
 同源 `/api/v1`，JSON，请求／响应不缓存。失败返回 `{error:{code,message,details?},requestId}`。所有写请求带 `Content-Type: application/json`、`X-App-Request: 1`；已登录写请求另带 `X-CSRF-Token`。来源须与本机服务同源。响应设置 CSP、nosniff、禁止嵌入、no-store。
 
-会话采用 HttpOnly、SameSite=Strict Cookie，7 天有效；令牌只保存哈希；退出撤销当前会话。当前为 loopback HTTP，生产 HTTPS／Secure Cookie 需随部署配置。浏览器不存身体数据或登录令牌到 localStorage，不导入原型数据。
+会话采用 HttpOnly、SameSite=Strict Cookie，7 天有效；令牌只保存哈希；退出撤销当前会话。本地模式为 loopback HTTP；合成数据联机模式通过精确 HTTPS origin 访问，Cookie 带 Secure，Nginx 反代本机端口。浏览器不存身体数据或登录令牌到 localStorage，不导入原型数据。
+
+联机测试补充：匿名 `GET /config` 只返回运行模式、登录方式和 `syntheticOnly`，不返回体验码／摘要。`POST /auth/test-login` 接收 `{code}`，24 位随机体验码匹配服务器已签发摘要，返回普通用户会话；同一码恢复同一测试身份，不存真实手机号。该接口仅测试模式可用，本地返回 404；测试模式的 `/auth/code`、`/auth/login` 返回 `TEST_LOGIN_ONLY`，不能泄露开发短信码。主机、来源校验按配置的精确 HTTPS origin；只有来自回环反向代理且格式有效的单个 `X-Forwarded-For` 才作为限流 IP，Nginx 覆盖用户传入值。
 
 | 方法与路径 | 请求／结果要点 |
 | --- | --- |

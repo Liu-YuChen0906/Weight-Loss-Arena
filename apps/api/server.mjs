@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { openStore } from './store.mjs';
 import { createService } from './service.mjs';
 import { AppError, ensure } from '../../packages/contracts/index.mjs';
+import { loadRuntime, validateTestConfig } from './runtime.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const staticFiles = { '/': ['apps/web/index.html', 'text/html'], '/app.js': ['apps/web/app.js', 'text/javascript'], '/request.mjs': ['apps/web/request.mjs', 'text/javascript'], '/styles.css': ['apps/web/styles.css', 'text/css'], '/packages/domain/index.mjs': ['packages/domain/index.mjs', 'text/javascript'], '/packages/contracts/index.mjs': ['packages/contracts/index.mjs', 'text/javascript'] };
 async function jsonBody(req) {
@@ -15,8 +17,11 @@ async function jsonBody(req) {
   try { const data = JSON.parse(raw || '{}'); ensure(data && typeof data === 'object' && !Array.isArray(data), 'INVALID_JSON', '请求格式不正确'); return data; } catch (e) { if (e instanceof AppError) throw e; throw new AppError('INVALID_JSON', '请求格式不正确'); }
 }
 const sessionToken = req => req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('cq_session='))?.slice(11);
-export function createApplication({ databasePath = ':memory:', clock, smsMode = 'development', deliverCode } = {}) {
-  const store = openStore(databasePath), service = createService(store, { clock, smsMode, deliverCode });
+export function createApplication({ databasePath = ':memory:', clock, smsMode = 'development', deliverCode, mode = 'local', publicOrigin, testAccounts = [] } = {}) {
+  if (!['local', 'test'].includes(mode)) throw new Error('Unsupported application mode');
+  if (mode === 'test') publicOrigin = validateTestConfig(publicOrigin, testAccounts);
+  const store = openStore(databasePath), service = createService(store, { clock, smsMode: mode === 'test' ? 'test' : smsMode, deliverCode, testAccounts: mode === 'test' ? testAccounts : [] });
+  const cookie = token => `cq_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${token ? 604800 : 0}${mode === 'test' ? '; Secure' : ''}`;
   const server = http.createServer(async (req, res) => {
     const requestId = randomUUID();
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin');
@@ -27,7 +32,8 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
     try {
       const url = new URL(req.url, 'http://localhost');
       const host = req.headers.host || '';
-      ensure(/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host), 'HOST_REJECTED', '此开发版仅允许本机访问', 403);
+      const localHost = /^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host);
+      ensure(mode === 'test' ? host === new URL(publicOrigin).host || (localHost && url.pathname === '/api/v1/health') : localHost, 'HOST_REJECTED', '访问地址不受支持', 403);
       if (!url.pathname.startsWith('/api/')) {
         ensure(req.method === 'GET' || req.method === 'HEAD', 'METHOD_NOT_ALLOWED', '请求方式不支持', 405);
         const file = staticFiles[url.pathname]; ensure(file, 'NOT_FOUND', '页面不存在', 404);
@@ -37,18 +43,26 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
       const write = !['GET', 'HEAD'].includes(req.method);
       if (write) {
         ensure(req.headers['x-app-request'] === '1', 'CSRF_REJECTED', '请求来源无效', 403);
-        if (req.headers.origin) ensure(req.headers.origin === 'http://' + host, 'CSRF_REJECTED', '请求来源无效', 403);
+        if (req.headers.origin) ensure(req.headers.origin === (mode === 'test' ? publicOrigin : 'http://' + host), 'CSRF_REJECTED', '请求来源无效', 403);
         ensure(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), 'CSRF_REJECTED', '请求来源无效', 403);
       }
       const body = write ? await jsonBody(req) : {}, key = req.headers['idempotency-key'];
       // Reading a streamed body can cross midnight or the session/period deadline.
       service.expire();
-      const route = req.method + ' ' + url.pathname, ip = req.socket.remoteAddress || 'local';
-      if (route === 'GET /api/v1/health') { send({ ok: true, storage: store.get('SELECT 1 ok').ok === 1, mode: smsMode }); return; }
+      const route = req.method + ' ' + url.pathname, remote = req.socket.remoteAddress || 'local';
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = mode === 'test' && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote) && typeof forwarded === 'string' && isIP(forwarded) ? forwarded : remote;
+      if (route === 'GET /api/v1/health') { send({ ok: true, storage: store.get('SELECT 1 ok').ok === 1, mode: mode === 'test' ? 'test' : smsMode }); return; }
+      if (route === 'GET /api/v1/config') { send({ mode, login: mode === 'test' ? 'test-code' : 'phone', syntheticOnly: mode === 'test' }); return; }
+      if (route === 'POST /api/v1/auth/test-login') {
+        ensure(mode === 'test', 'NOT_FOUND', '接口不存在', 404);
+        const result = service.testLogin(body, ip); res.setHeader('Set-Cookie', cookie(result.token)); send({ user: result.user }); return;
+      }
+      if (mode === 'test' && ['/api/v1/auth/code', '/api/v1/auth/login'].includes(url.pathname)) throw new AppError('TEST_LOGIN_ONLY', '此环境请使用体验码登录', 403);
       if (route === 'POST /api/v1/auth/code') { send(await service.requestCode(body, ip)); return; }
       if (route === 'POST /api/v1/auth/login') {
         const result = service.login(body, ip);
-        res.setHeader('Set-Cookie', `cq_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`);
+        res.setHeader('Set-Cookie', cookie(result.token));
         send({ user: result.user }); return;
       }
       const invite = url.pathname.match(/^\/api\/v1\/invites\/([^/]+)$/);
@@ -57,12 +71,12 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
       if (write) ensure(req.headers['x-csrf-token'] === user.csrf, 'CSRF_REJECTED', '会话已变化，请刷新后重试', 403);
       if (route === 'GET /api/v1/me') send(service.me(user));
       else if (route === 'PATCH /api/v1/me') send(service.updateProfile(user, body, key));
-      else if (route === 'POST /api/v1/auth/logout') { service.logout(token); res.setHeader('Set-Cookie', 'cq_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); send({ ok: true }); }
+      else if (route === 'POST /api/v1/auth/logout') { service.logout(token); res.setHeader('Set-Cookie', cookie('')); send({ ok: true }); }
       else if (route === 'POST /api/v1/rooms') send(service.createRoom(user, body, key));
       else if (invite && req.method === 'POST') send(service.joinRoom(user, invite[1], body, key));
       else if (route === 'GET /api/v1/history') send({ rooms: service.history(user) });
       else if (route === 'GET /api/v1/me/export') { res.setHeader('Content-Disposition', 'attachment; filename="my-data.json"'); send(service.exportData(user)); }
-      else if (route === 'DELETE /api/v1/me') { const result = service.deleteAccount(user, body); res.setHeader('Set-Cookie', 'cq_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); send(result); }
+      else if (route === 'DELETE /api/v1/me') { const result = service.deleteAccount(user, body); res.setHeader('Set-Cookie', cookie('')); send(result); }
       else if (route === 'POST /api/v1/support') send(service.support(user, body, key));
       else if (route === 'GET /api/v1/support') send({ requests: service.supportList(user) });
       else {
@@ -91,9 +105,7 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
   return { server, service, store, async close() { clearInterval(worker); await new Promise(resolve => server.close(resolve)); store.close(); } };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const host = process.env.HOST || '127.0.0.1';
-  if (!['127.0.0.1', 'localhost', '::1'].includes(host) || process.env.NODE_ENV === 'production' || (process.env.SMS_MODE && process.env.SMS_MODE !== 'development')) throw new Error('This build is local-only. Production SMS, data policy and deployment gates must be completed before public launch.');
-  const app = createApplication({ databasePath: process.env.DATABASE_PATH || resolve(root, 'var/development.sqlite') });
-  app.server.listen(Number(process.env.PORT || 4180), host, () => console.log(`秤群结队 · 本地开发 http://${host}:${app.server.address().port}`));
+  const config = loadRuntime(), app = createApplication(config);
+  app.server.listen(Number(process.env.PORT || (config.mode === 'test' ? 4181 : 4180)), config.host, () => console.log(`秤群结队 · ${config.mode === 'test' ? '合成数据联机测试 ' + config.publicOrigin : '本地开发 http://' + config.host + ':' + app.server.address().port}`));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, async () => { await app.close(); process.exit(0); });
 }

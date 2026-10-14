@@ -4,7 +4,7 @@ import { businessDate, addDays, endDate, remainingDays, calculateGoal, normalize
 const hash = value => createHash('sha256').update(value).digest('hex');
 const safeEqual = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const id = () => randomUUID();
-export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode } = {}) {
+export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode, testAccounts = [] } = {}) {
   const { get, all, run, transaction } = store;
   const now = () => clock(), stamp = () => now().toISOString(), today = () => businessDate(now());
   function limit(key, max, seconds) {
@@ -30,7 +30,18 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     ensure(session, 'UNAUTHENTICATED', '登录已过期，请重新登录', 401);
     return session;
   }
-  const publicUser = user => ({ id: user.id, nickname: user.nickname, phone: user.phone.slice(0, 3) + '****' + user.phone.slice(-4), consent: user.consent_version === CONSENT_VERSION, currentRoomId: user.current_room_id, csrf: user.csrf });
+  const publicUser = user => ({ id: user.id, nickname: user.nickname, phone: user.phone.startsWith('test:') ? '测试身份' : user.phone.slice(0, 3) + '****' + user.phone.slice(-4), consent: user.consent_version === CONSENT_VERSION, currentRoomId: user.current_room_id, csrf: user.csrf });
+  function sessionFor(phone, nickname) {
+    let user = get('SELECT * FROM users WHERE phone=?', phone);
+    if (!user) {
+      const userId = id();
+      run('INSERT INTO users(id,phone,nickname,created_at) VALUES(?,?,?,?)', userId, phone, nickname, stamp());
+      user = get('SELECT * FROM users WHERE id=?', userId);
+    }
+    const token = randomBytes(32).toString('base64url'), csrf = randomBytes(24).toString('base64url');
+    run('INSERT INTO sessions VALUES(?,?,?,?)', hash(token), user.id, csrf, now().getTime() + 7 * 86400000);
+    return { token, user: publicUser({ ...user, csrf }) };
+  }
   function consent(user) { ensure(get('SELECT consent_version FROM users WHERE id=?', user.id)?.consent_version === CONSENT_VERSION, 'CONSENT_REQUIRED', '请确认年龄和数据使用说明', 403); }
   function roomFor(user, roomId) {
     const room = get('SELECT * FROM rooms WHERE id=?', roomId), member = get("SELECT * FROM members WHERE room_id=? AND user_id=? AND state='JOINED'", roomId, user.id);
@@ -98,16 +109,16 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
       ensure(safeEqual(otp.code_hash, hash(body.phone + ':' + body.code)), 'INVALID_CODE', '验证码无效或已过期', 401);
       return transaction(() => {
         run('DELETE FROM otp WHERE phone=?', body.phone);
-        let user = get('SELECT * FROM users WHERE phone=?', body.phone);
-        if (!user) {
-          const userId = id();
-          run('INSERT INTO users(id,phone,nickname,created_at) VALUES(?,?,?,?)', userId, body.phone, '朋友' + body.phone.slice(-4), stamp());
-          user = get('SELECT * FROM users WHERE id=?', userId);
-        }
-        const token = randomBytes(32).toString('base64url'), csrf = randomBytes(24).toString('base64url');
-        run('INSERT INTO sessions VALUES(?,?,?,?)', hash(token), user.id, csrf, now().getTime() + 7 * 86400000);
-        return { token, user: publicUser({ ...user, csrf }) };
+        return sessionFor(body.phone, '朋友' + body.phone.slice(-4));
       });
+    },
+    testLogin(body, ip) {
+      ensure(testAccounts.length, 'NOT_FOUND', '接口不存在', 404);
+      limit('test-login:' + hash(ip), 50, 3600);
+      ensure(typeof body.code === 'string' && /^[A-Za-z0-9_-]{24}$/.test(body.code), 'INVALID_CODE', '体验码无效', 401);
+      const account = testAccounts.find(a => safeEqual(a.codeHash, hash(body.code)));
+      ensure(account, 'INVALID_CODE', '体验码无效', 401);
+      return transaction(() => sessionFor('test:' + account.id, account.nickname));
     },
     logout(token) { run('DELETE FROM sessions WHERE token_hash=?', hash(token)); return { ok: true }; },
     me(user) { return { user: publicUser({ ...get('SELECT * FROM users WHERE id=?', user.id), csrf: user.csrf }), today: today(), mode: smsMode, consentVersion: CONSENT_VERSION }; },
