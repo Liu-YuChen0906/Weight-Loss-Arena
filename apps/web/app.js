@@ -66,7 +66,7 @@ function selectPill(control, value) {
 function shell(content) {
   const nav = room() && room().status !== 'LOBBY' && (['group', 'record', 'data'].includes(page) || page.startsWith('analysis/'));
   const selected = page.startsWith('analysis/') ? 'group' : page;
-  return `<div class="layout page-${page.split('/')[0]} ${['create', 'join', 'lobby', 'login', 'profile'].includes(page) ? 'form-layout' : ''}" data-context="${nav ? esc(user?.id + ':' + room().id) : ''}"><aside class="sidebar"><div class="brand">${button('秤群结队', 'go:home')}</div>${nav ? `<nav class="nav" aria-label="主导航">${pillControl([['group', icon('group') + '小组'], ['record', icon('record') + '记录'], ['data', icon('data') + '数据']], selected, 'go:', 'nav-track', '页面导航')}</nav>` : ''}</aside><main data-page="${esc(page)}">${content}</main></div>`;
+  return `<div class="layout page-${page.split('/')[0]} ${['create', 'join', 'lobby', 'login', 'profile'].includes(page) ? 'form-layout' : ''}" data-context="${nav ? esc(user?.id + ':' + room().id) : ''}"><aside class="sidebar"><div class="brand">${button('上秤', 'go:home')}</div>${nav ? `<nav class="nav" aria-label="主导航">${pillControl([['group', icon('group') + '小组'], ['record', icon('record') + '记录'], ['data', icon('data') + '数据']], selected, 'go:', 'nav-track', '页面导航')}</nav>` : ''}</aside><main data-page="${esc(page)}">${content}</main></div>`;
 }
 function mountShell(content) {
   const layout = $('#app > .layout'), main = layout?.querySelector('main');
@@ -101,7 +101,7 @@ function homePage() {
   const primaryActions = user?.currentRoomId
     ? btn('返回当前小组', 'current', 'full')
     : btn('创建小组', 'create', 'full') + btn('加入小组', 'join', 'secondary full');
-  return `<main class="hero-home"><h1>秤群结队</h1><div class="home-actions">${primaryActions}</div><div class="home-secondary">${user ? button('历史小组', 'history') + button('账号与支持', 'account') : button('登录', 'login')}${button('隐私与数据', 'privacy')}</div></main>`;
+  return `<main class="hero-home"><h1>上秤</h1><div class="home-actions">${primaryActions}</div><div class="home-secondary">${user ? button('历史小组', 'history') + button('账号与支持', 'account') : button('登录', 'login')}${button('隐私与数据', 'privacy')}</div></main>`;
 }
 function loginPage() {
   if (appMode === 'test') return `<div class="form-shell">${back()}${head('联机测试登录', '每人使用一个体验码；同一码可重新登录')}<form class="card" data-form="test-login">${field('体验码', 'code', '', 'type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴你的专属体验码" maxlength="24" required')}<p class="sub">只使用示例身高、体重和昵称，请勿填写真实个人数据。</p><p class="error" id="form-error" role="alert"></p><button class="btn full" type="submit">进入测试</button></form></div>`;
@@ -213,8 +213,10 @@ async function act(action, element) {
   if (action === 'create' || action === 'join') { if (!await ensureUser(action)) return; if (action === 'create' && user.currentRoomId) { toast('你已在一个未结束小组中'); await loadCurrent(); return; } navigate(action); return; }
   if (action === 'login') { nextPage = 'home'; navigate('login'); return; }
   if (action === 'send-code') {
+    developmentCode = ''; $('#development-code').hidden = true;
     loginPhone = $('[name="phone"]').value.trim(); const r = await api('/auth/code', 'POST', { phone: loginPhone }, { allowAnonymous: true });
     developmentCode = r.developmentCode || ''; const panel = $('#development-code'); panel.hidden = !developmentCode; panel.innerHTML = `本地测试验证码：<strong>${esc(developmentCode)}</strong><br>未发送短信，请使用测试手机号。`; delete element.dataset.busy;
+    if (r.deliveryStatus === 'ACCEPTED') toast(r.message);
     element.textContent = '60 秒后重试'; element.disabled = true;
     let remaining = 60; const cooldown = setInterval(() => { remaining--; if (!element.isConnected || remaining <= 0) { clearInterval(cooldown); element.disabled = false; element.textContent = '获取验证码'; } else element.textContent = remaining + ' 秒后重试'; }, 1000); return;
   }
@@ -256,7 +258,7 @@ async function act(action, element) {
   if (action.startsWith('history-room:')) { const roomId = action.split(':')[1]; resetRecord(); data = null; await refresh({ force: true, roomId }); navigate('group'); return; }
   if (action === 'account') { modal('账号与支持', `<p>${esc(user.nickname)} · ${esc(user.phone)}</p>${button('修改昵称与查看同意', 'profile', 'settings-row')}${button('取回本人数据', 'export', 'settings-row')}${button('提交支持请求', 'support', 'settings-row')}${button('我的支持请求', 'support-list', 'settings-row')}${button('退出登录', 'logout', 'settings-row')}${button('注销并删除数据', 'delete', 'settings-row')}`, '', true); return; }
   if (action === 'profile') { nextPage = 'home'; navigate('profile'); return; }
-  if (action === 'export') { const result = await api('/me/export'); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })); link.download = '秤群结队-本人数据.json'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); return; }
+  if (action === 'export') { const result = await api('/me/export'); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })); link.download = '上秤-本人数据.json'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); return; }
   if (action === 'support') { modal('提交支持请求', '<form id="support-form" data-form="support"><label class="field"><span class="field-label">问题描述</span><textarea name="message" maxlength="1000" required placeholder="请勿填写验证码或其他人的身体数据"></textarea></label><p class="sub">' + (appMode === 'test' ? '请求保存在测试环境，需由开发者查看处理。' : '请求保存在本机，需由本地开发者查看处理。') + '</p><p id="modal-error" class="error"></p></form>', '<button class="btn full" form="support-form" type="submit">提交</button>' + button('取消', 'close', 'cancel'), true); return; }
   if (action === 'support-list') { const result = await api('/support'); modal('我的支持请求', result.requests.length ? result.requests.map(r => `<section class="support-item"><strong>${esc(r.message)}</strong><p class="sub">${r.status === 'OPEN' ? '待处理' : '已处理'} · ${esc(r.id.slice(0, 8))}</p></section>`).join('') : '<div class="empty">没有支持请求</div>', '', true); return; }
   if (action === 'logout') { await api('/auth/logout', 'POST', {}); user = null; clearPrivate(); navigate('home'); return; }

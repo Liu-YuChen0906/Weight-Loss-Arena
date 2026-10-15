@@ -1,11 +1,15 @@
 import { randomUUID, randomBytes, randomInt, createHash, timingSafeEqual } from 'node:crypto';
 import { ensure, text, number, RULES, INTENSITIES, CONSENT_VERSION } from '../../packages/contracts/index.mjs';
 import { businessDate, addDays, endDate, remainingDays, calculateGoal, normalizeWeight, stats, rankCoverage, daysBetween } from '../../packages/domain/index.mjs';
+import { dispatchCode, verifyProviderCode, SmsDeliveryError } from './sms.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const safeEqual = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const id = () => randomUUID();
-export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode, testAccounts = [] } = {}) {
+export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode, smsTimeoutMs = 8000, testAccounts = [] } = {}) {
+  if (!Number.isInteger(smsTimeoutMs) || smsTimeoutMs < 1 || smsTimeoutMs > 15000) throw new Error('Invalid SMS timeout');
   const { get, all, run, transaction } = store;
+  const verifyingPhones = new Set();
+  const remoteVerification = smsMode !== 'development' && typeof deliverCode?.verifyCode === 'function';
   const now = () => clock(), stamp = () => now().toISOString(), today = () => businessDate(now());
   function limit(key, max, seconds) {
     const ms = now().getTime(), row = get('SELECT * FROM rate_limits WHERE key=?', key);
@@ -21,6 +25,7 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
       }
       run('DELETE FROM sessions WHERE expires_at<=?', now().getTime());
       run('DELETE FROM otp WHERE expires_at<=?', now().getTime());
+      run("UPDATE otp SET delivery_state='UNKNOWN' WHERE delivery_state='PENDING' AND sent_at<=?", now().getTime() - smsTimeoutMs);
       run('DELETE FROM rate_limits WHERE reset_at<=?', now().getTime());
     });
   }
@@ -84,27 +89,79 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     if (!first) run("UPDATE rooms SET status='CANCELLED',version=version+1 WHERE id=? AND status='LOBBY'", roomId);
     else run('UPDATE rooms SET owner_id=?,version=version+1 WHERE id=?', first.user_id, roomId);
   }
+  function applyAccountDeletion(userId) {
+    const user = get('SELECT phone FROM users WHERE id=?', userId);
+    const rooms = all("SELECT r.id,r.status,r.owner_id FROM rooms r JOIN members m ON m.room_id=r.id WHERE m.user_id=? AND m.state='JOINED'", userId);
+    if (user) run('DELETE FROM otp WHERE phone=?', user.phone);
+    // Other members' cached reminder responses may contain the deleted nickname.
+    for (const r of rooms) run('DELETE FROM idempotency WHERE operation=?', 'reminders:' + r.id);
+    run('DELETE FROM users WHERE id=?', userId);
+    for (const r of rooms) { if (r.status === 'LOBBY' && r.owner_id === userId) transferOrClose(r.id); else bump(r.id); }
+  }
+  function replayDeletionsInTransaction() {
+    const after = get('SELECT last_sequence FROM privacy_meta WHERE id=1').last_sequence;
+    for (const event of store.journal.events().filter(e => e.sequence > after)) {
+      applyAccountDeletion(event.user_id);
+      run('UPDATE privacy_meta SET last_sequence=? WHERE id=1', event.sequence);
+    }
+  }
+  // Replay before any authentication or body-data read becomes available.
+  transaction(replayDeletionsInTransaction);
+  async function providerLogin(body, otp) {
+    ensure(remoteVerification, 'SMS_UNAVAILABLE', '短信核验服务暂不可用，请稍后重试', 503);
+    ensure(!verifyingPhones.has(body.phone), 'AUTH_IN_PROGRESS', '正在核验，请稍候', 409);
+    verifyingPhones.add(body.phone);
+    try {
+      run('UPDATE otp SET attempts=attempts+1 WHERE phone=? AND dispatch_id=?', body.phone, otp.dispatch_id);
+      let result;
+      try { result = await verifyProviderCode(deliverCode.verifyCode, { phone: body.phone, code: body.code, dispatchId: otp.dispatch_id }, smsTimeoutMs); }
+      catch {
+        // A timed-out check may have consumed the supplier's OTP. Require a new send.
+        run("UPDATE otp SET delivery_state='UNKNOWN' WHERE phone=? AND dispatch_id=?", body.phone, otp.dispatch_id);
+        ensure(false, 'SMS_VERIFICATION_UNAVAILABLE', '短信核验结果暂未确认，请稍后重新获取验证码', 503);
+      }
+      ensure(result.status === 'PASS', 'INVALID_CODE', '验证码无效或已过期', 401);
+      return transaction(() => {
+        const consumed = run("DELETE FROM otp WHERE phone=? AND dispatch_id=? AND delivery_state='ACCEPTED' AND expires_at>?", body.phone, otp.dispatch_id, now().getTime());
+        ensure(consumed.changes === 1, 'INVALID_CODE', '验证码无效或已过期', 401);
+        return sessionFor(body.phone, '朋友' + body.phone.slice(-4));
+      });
+    } finally { verifyingPhones.delete(body.phone); }
+  }
   const api = {
     expire, authenticate, publicUser,
     async requestCode(body, ip) {
       ensure(typeof body.phone === 'string' && /^1[3-9]\d{9}$/.test(body.phone), 'VALIDATION', '请输入 11 位手机号');
+      ensure(smsMode === 'development' || typeof deliverCode === 'function', 'SMS_UNAVAILABLE', '短信服务暂不可用', 503);
+      ensure(!verifyingPhones.has(body.phone), 'AUTH_IN_PROGRESS', '正在核验，请稍候再获取', 409);
       limit('sms-ip:' + hash(ip), 20, 3600);
       const old = get('SELECT * FROM otp WHERE phone=?', body.phone);
       ensure(!old || now().getTime() - old.sent_at >= 60000, 'RATE_LIMITED', '请在 60 秒后重新获取', 429);
       limit('sms-phone:' + hash(body.phone), 10, 86400);
-      const code = String(randomInt(100000, 1000000)), codeHash = hash(body.phone + ':' + code);
-      run('INSERT OR REPLACE INTO otp VALUES(?,?,?,?,0)', body.phone, codeHash, now().getTime() + 300000, now().getTime());
+      const dispatchId = id(), code = remoteVerification ? undefined : String(randomInt(100000, 1000000));
+      // Persist the verification method in the existing opaque credential column.
+      // This marker can never match a local SHA256 hash, including after a restart.
+      const codeHash = remoteVerification ? 'pnvs:' + dispatchId : hash(body.phone + ':' + code);
+      run('INSERT OR REPLACE INTO otp(phone,code_hash,expires_at,sent_at,attempts,delivery_state,dispatch_id) VALUES(?,?,?,?,0,?,?)', body.phone, codeHash, now().getTime() + 300000, now().getTime(), smsMode === 'development' ? 'DEVELOPMENT' : 'PENDING', dispatchId);
       if (smsMode !== 'development') {
-        ensure(deliverCode, 'SMS_UNAVAILABLE', '短信服务暂不可用', 503);
-        try { await deliverCode({ phone: body.phone, code }); } catch { run('DELETE FROM otp WHERE phone=? AND code_hash=?', body.phone, codeHash); ensure(false, 'SMS_UNAVAILABLE', '短信发送失败，请稍后重试', 503); }
+        try { await dispatchCode(deliverCode, { phone: body.phone, code, dispatchId }, smsTimeoutMs); }
+        catch (error) {
+          const state = error instanceof SmsDeliveryError && error.outcome === 'FAILED' ? 'FAILED' : 'UNKNOWN';
+          run("UPDATE otp SET delivery_state=? WHERE phone=? AND dispatch_id=? AND delivery_state='PENDING'", state, body.phone, dispatchId);
+          ensure(false, state === 'FAILED' ? 'SMS_UNAVAILABLE' : 'SMS_DELIVERY_UNKNOWN', state === 'FAILED' ? '短信发送失败，请稍后重试' : '短信发送结果暂未确认，请在 60 秒后重新获取', 503);
+        }
+        const changed = run("UPDATE otp SET delivery_state='ACCEPTED' WHERE phone=? AND dispatch_id=? AND delivery_state='PENDING' AND expires_at>?", body.phone, dispatchId, now().getTime());
+        ensure(changed.changes === 1, 'SMS_DELIVERY_UNKNOWN', '短信发送结果暂未确认，请重新获取', 503);
       }
-      return { retryAfter: 60, expiresIn: 300, ...(smsMode === 'development' ? { developmentCode: code, message: '本地测试验证码，未发送短信' } : {}) };
+      return { retryAfter: 60, expiresIn: 300, deliveryStatus: smsMode === 'development' ? 'DEVELOPMENT' : 'ACCEPTED', ...(smsMode === 'development' ? { developmentCode: code, message: '本地测试验证码，未发送短信' } : { message: '短信请求已受理，请留意手机验证码' }) };
     },
     login(body, ip) {
       ensure(typeof body.phone === 'string' && /^1[3-9]\d{9}$/.test(body.phone) && typeof body.code === 'string' && /^\d{6}$/.test(body.code), 'INVALID_CODE', '验证码无效或已过期', 401);
       limit('login:' + hash(ip), 50, 3600);
       const otp = get('SELECT * FROM otp WHERE phone=?', body.phone);
-      ensure(otp && otp.attempts < 5 && otp.expires_at > now().getTime(), 'INVALID_CODE', '验证码无效或已过期', 401);
+      ensure(otp && otp.delivery_state === (smsMode === 'development' ? 'DEVELOPMENT' : 'ACCEPTED') && otp.attempts < 5 && otp.expires_at > now().getTime(), 'INVALID_CODE', '验证码无效或已过期', 401);
+      ensure(!remoteVerification || otp.code_hash.startsWith('pnvs:'), 'INVALID_CODE', '验证码无效或已过期', 401);
+      if (otp.code_hash.startsWith('pnvs:')) return providerLogin(body, otp);
       run('UPDATE otp SET attempts=attempts+1 WHERE phone=?', body.phone);
       ensure(safeEqual(otp.code_hash, hash(body.phone + ':' + body.code)), 'INVALID_CODE', '验证码无效或已过期', 401);
       return transaction(() => {
@@ -277,12 +334,11 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     supportList(user) { return all('SELECT id,message,status,created_at createdAt FROM support_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 100', user.id); },
     deleteAccount(user, body) {
       ensure(body.confirm === '注销并删除我的数据', 'CONFIRM_REQUIRED', '请填写确认文字');
+      // Commit the durable tombstone first; a crash is completed on next startup.
+      const event = store.journal.append(user.id, stamp());
       return transaction(() => {
-        const rooms = all("SELECT r.id,r.status,r.owner_id FROM rooms r JOIN members m ON m.room_id=r.id WHERE m.user_id=? AND m.state='JOINED'", user.id);
-        run('DELETE FROM otp WHERE phone=?', user.phone);
-        run('DELETE FROM users WHERE id=?', user.id);
-        for (const r of rooms) { if (r.status === 'LOBBY' && r.owner_id === user.id) transferOrClose(r.id); else bump(r.id); }
-        return { ok: true };
+        replayDeletionsInTransaction();
+        return { ok: true, deletion: { requestId: event.id, onlineStatus: 'COMPLETED', backupStatus: 'REPLAY_REQUIRED' } };
       });
     }
   };

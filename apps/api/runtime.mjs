@@ -15,7 +15,7 @@ export function loadRuntime(env = process.env) {
   const mode = env.APP_MODE || 'local', host = env.HOST || '127.0.0.1';
   if (mode === 'local') {
     if (!['127.0.0.1', 'localhost', '::1'].includes(host) || env.NODE_ENV === 'production' || (env.SMS_MODE && env.SMS_MODE !== 'development')) throw new Error('Local mode cannot be exposed publicly. Use the isolated synthetic test environment.');
-    return { mode, host, databasePath: env.DATABASE_PATH || resolve('var/development.sqlite') };
+    return { mode, host, databasePath: env.DATABASE_PATH || resolve('var/development.sqlite'), deletionJournalPath: env.DELETION_JOURNAL_PATH };
   }
   if (mode !== 'test') throw new Error('Real-data production launch is not enabled.');
   const databasePath = env.DATABASE_PATH;
@@ -23,5 +23,5 @@ export function loadRuntime(env = process.env) {
   if (!env.TEST_ACCOUNTS_PATH) throw new Error('Issue test accounts before startup.');
   const testAccounts = JSON.parse(readFileSync(env.TEST_ACCOUNTS_PATH, 'utf8'));
   const publicOrigin = validateTestConfig(env.PUBLIC_ORIGIN, testAccounts);
-  return { mode, host, databasePath, publicOrigin, testAccounts };
+  return { mode, host, databasePath, publicOrigin, testAccounts, deletionJournalPath: env.DELETION_JOURNAL_PATH };
 }

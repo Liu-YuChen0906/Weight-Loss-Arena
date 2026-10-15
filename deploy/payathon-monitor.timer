@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Payathon test operational health every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

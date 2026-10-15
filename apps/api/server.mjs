@@ -17,10 +17,13 @@ async function jsonBody(req) {
   try { const data = JSON.parse(raw || '{}'); ensure(data && typeof data === 'object' && !Array.isArray(data), 'INVALID_JSON', '请求格式不正确'); return data; } catch (e) { if (e instanceof AppError) throw e; throw new AppError('INVALID_JSON', '请求格式不正确'); }
 }
 const sessionToken = req => req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('cq_session='))?.slice(11);
-export function createApplication({ databasePath = ':memory:', clock, smsMode = 'development', deliverCode, mode = 'local', publicOrigin, testAccounts = [] } = {}) {
+export function createApplication({ databasePath = ':memory:', deletionJournalPath, readOnlyJournal = false, clock, smsMode = 'development', deliverCode, smsTimeoutMs, mode = 'local', publicOrigin, testAccounts = [] } = {}) {
   if (!['local', 'test'].includes(mode)) throw new Error('Unsupported application mode');
   if (mode === 'test') publicOrigin = validateTestConfig(publicOrigin, testAccounts);
-  const store = openStore(databasePath), service = createService(store, { clock, smsMode: mode === 'test' ? 'test' : smsMode, deliverCode, testAccounts: mode === 'test' ? testAccounts : [] });
+  const store = openStore(databasePath, { deletionJournalPath, readOnlyJournal });
+  let service;
+  try { service = createService(store, { clock, smsMode: mode === 'test' ? 'test' : smsMode, deliverCode, smsTimeoutMs, testAccounts: mode === 'test' ? testAccounts : [] }); }
+  catch (error) { store.close(); throw error; }
   const cookie = token => `cq_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${token ? 604800 : 0}${mode === 'test' ? '; Secure' : ''}`;
   const server = http.createServer(async (req, res) => {
     const requestId = randomUUID();
@@ -61,7 +64,7 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
       if (mode === 'test' && ['/api/v1/auth/code', '/api/v1/auth/login'].includes(url.pathname)) throw new AppError('TEST_LOGIN_ONLY', '此环境请使用体验码登录', 403);
       if (route === 'POST /api/v1/auth/code') { send(await service.requestCode(body, ip)); return; }
       if (route === 'POST /api/v1/auth/login') {
-        const result = service.login(body, ip);
+        const result = await service.login(body, ip);
         res.setHeader('Set-Cookie', cookie(result.token));
         send({ user: result.user }); return;
       }
@@ -106,6 +109,6 @@ export function createApplication({ databasePath = ':memory:', clock, smsMode = 
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const config = loadRuntime(), app = createApplication(config);
-  app.server.listen(Number(process.env.PORT || (config.mode === 'test' ? 4181 : 4180)), config.host, () => console.log(`秤群结队 · ${config.mode === 'test' ? '合成数据联机测试 ' + config.publicOrigin : '本地开发 http://' + config.host + ':' + app.server.address().port}`));
+  app.server.listen(Number(process.env.PORT || (config.mode === 'test' ? 4181 : 4180)), config.host, () => console.log(`上秤 · ${config.mode === 'test' ? '合成数据联机测试 ' + config.publicOrigin : '本地开发 http://' + config.host + ':' + app.server.address().port}`));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, async () => { await app.close(); process.exit(0); });
 }

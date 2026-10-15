@@ -1,0 +1,20 @@
+[Unit]
+Description=Check Payathon test service, TLS, verified backup, disk and errors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/payathon-ops/current
+EnvironmentFile=/etc/payathon-test/app.env
+Environment=BACKUP_ROOT=/var/backups/payathon-test
+Environment=MONITOR_ROOT=/var/lib/payathon-monitor
+ExecStart=/opt/payathon-tools/node-v24.19.0-linux-x64/bin/node scripts/monitor.mjs
+TimeoutStartSec=1min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/payathon-monitor
+

@@ -27,7 +27,7 @@ test('ended period coverage remains full-period, personal 7-day analysis stays s
 });
 test('non-development SMS adapter never exposes a development code', async t => {
   const store = openStore(); t.after(() => store.close()); let sent;
-  const api = createService(store, { smsMode: 'provider', deliverCode: async input => { sent = input; } });
+  const api = createService(store, { smsMode: 'provider', deliverCode: async input => { sent = input; return { status: 'ACCEPTED' }; } });
   const result = await api.requestCode({ phone: '13880000001' }, 'test'); assert.equal(result.developmentCode, undefined); assert.equal(sent.phone, '13880000001');
   assert.ok(api.login({ phone: sent.phone, code: sent.code }, 'test').token);
 });
