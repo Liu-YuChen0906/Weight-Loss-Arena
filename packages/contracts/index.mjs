@@ -16,3 +16,4 @@ export function number(value, min, max, label, integer = false) {
   ensure(typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value)), 'VALIDATION', `${label}须为 ${min}–${max} ${integer ? '之间的整数' : '之间的数字'}`);
   return value;
 }
+export const AVATARS = Object.freeze(['🌱', '🐱', '🐶', '🐼', '🦊', '🐰', '🐻', '🐧', '🌻', '🍊', '🥑', '⭐']);

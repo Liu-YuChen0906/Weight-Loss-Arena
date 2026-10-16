@@ -145,3 +145,12 @@
 }
 @media(prefers-reduced-motion:reduce){.pill-control .pill-thumb,.pill-control button{transition:none}.pill-control .pill-thumb>span{animation:none!important}}
 #environment{position:fixed;inset:0 0 auto;z-index:40;min-height:28px;padding:4px 12px;background:#fff0ec;color:#a73e30;text-align:center;font-size:12px;line-height:20px}.test-environment{padding-top:28px}.test-environment .hero-home{min-height:calc(100svh - 28px)}
+
+/* Editable group identity: generous touch targets and a compact mobile sheet. */
+.avatar{font-size:24px;font-weight:400}
+.identity-card{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;gap:16px;background:linear-gradient(110deg,#fff7f3,#fff);border-color:#f3dfd8;padding:18px 20px}
+.identity-card .avatar{width:52px;height:52px;background:#fff!important;font-size:30px}
+.identity-copy{display:grid;gap:2px;min-width:0}.identity-copy strong{font-size:17px;line-height:1.4}.identity-edit{color:var(--green);white-space:nowrap;font-size:13px;flex-shrink:0}.identity-edit span{margin-left:8px}
+.identity-preview{width:76px;height:76px;border-radius:26px;background:var(--soft);display:grid;place-items:center;font-size:44px;margin:22px auto}
+.avatar-picker{border:0;padding:0;margin:0;min-width:0}.avatar-picker legend{font-size:13px;color:var(--muted);margin-bottom:12px}.emoji-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}.emoji-choice{position:relative;cursor:pointer}.emoji-choice input{position:absolute;opacity:0;width:100%;height:100%;margin:0;inset:0;cursor:pointer}.emoji-choice span{display:grid;place-items:center;min-height:46px;border:1px solid var(--line);border-radius:14px;font-size:26px;background:#fafafa}.emoji-choice input:checked+span{border-color:var(--green);background:var(--soft);box-shadow:0 0 0 1px var(--green)}.emoji-choice input:focus-visible+span{outline:3px solid var(--green);outline-offset:3px}.identity-sheet .field{margin:20px 0 10px}.identity-note{margin-bottom:12px}.identity-sheet .cancel{width:100%;margin-top:8px;color:var(--muted)}
+@media(max-width:360px){.emoji-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}

@@ -12,9 +12,10 @@ export function openStore(path = ':memory:', { deletionJournalPath, readOnlyJour
   try {
     db.exec('BEGIN IMMEDIATE');
     const version = db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 2) throw new Error('Unsupported database version');
+    if (version > 3) throw new Error('Unsupported database version');
     if (version < 1) db.exec(readFileSync(new URL('../../db/migrations/001-initial.sql', import.meta.url), 'utf8'));
     if (version < 2) db.exec(readFileSync(new URL('../../db/migrations/002-sms-delivery.sql', import.meta.url), 'utf8'));
+    if (version < 3) db.exec(readFileSync(new URL('../../db/migrations/003-profile-avatar.sql', import.meta.url), 'utf8'));
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   let journal;

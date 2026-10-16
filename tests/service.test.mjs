@@ -140,3 +140,42 @@ test('database survives reopen and does not depend on browser state', async () =
   const dir = mkdtempSync(join(tmpdir(), 'chengqun-')), path = join(dir, 'test.sqlite'); let store;
   try { store = openStore(path); const api = createService(store); const code = await api.requestCode({ phone: '13800000001' }, 'persist'), login = api.login({ phone: '13800000001', code: code.developmentCode }, 'persist'); const user = api.authenticate(login.token); api.updateProfile(user, { nickname: '持久化', adult: true, sensitiveConsent: true }, key()); const roomId = api.createRoom(user, draft(), key()).roomId; store.close(); store = openStore(path); const reopened = createService(store); assert.equal(reopened.snapshot(reopened.authenticate(login.token), roomId).room.id, roomId); } finally { store?.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('identity edits preserve consent, validate avatars, and reach other members idempotently', async t => {
+  const f = fixture(t), a = await f.account(), b = await f.account();
+  const id = f.api.createRoom(a.user, draft(), key()).roomId;
+  f.api.joinRoom(b.user, f.api.snapshot(a.user, id).room.inviteCode, { sharingConsent: true }, key());
+  const before = f.store.get('SELECT consent_version,consent_at FROM users WHERE id=?', a.user.id);
+  const body = { nickname: '橘子队长', avatar: '🍊' }, idem = key();
+  f.api.updateProfile(a.user, body, idem); f.api.updateProfile(a.user, body, idem);
+  assert.deepEqual(f.store.get('SELECT consent_version,consent_at FROM users WHERE id=?', a.user.id), before);
+  const member = f.api.snapshot(b.user, id).members.find(m => m.id === a.user.id);
+  assert.equal(member.nickname, body.nickname); assert.equal(member.avatar, body.avatar);
+  assert.equal(f.api.me(a.user).user.avatar, body.avatar);
+  rejects(() => f.api.updateProfile(a.user, { ...body, avatar: '<svg>' }, key()), 'VALIDATION');
+  rejects(() => f.api.updateProfile(a.user, { ...body, nickname: '  ' }, key()), 'VALIDATION');
+  rejects(() => f.api.updateProfile(a.user, { ...body, nickname: '甲'.repeat(21) }, key()), 'VALIDATION');
+  f.api.updateProfile(a.user, { nickname: '只改昵称' }, key());
+  assert.equal(f.api.me(a.user).user.avatar, '🍊');
+  const unconsented = await f.account(false);
+  rejects(() => f.api.updateProfile(unconsented.user, body, key()), 'CONSENT_REQUIRED');
+});
+
+test('v2 identity migration preserves users, sessions and rooms and persists edited avatar on reopen', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'identity-migration-')), path = join(root, 'app.sqlite');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let store = openStore(path), api = createService(store);
+  const phone = '13960000888', otp = await api.requestCode({ phone }, phone), login = api.login({ phone, code: otp.developmentCode }, phone);
+  let user = api.authenticate(login.token);
+  api.updateProfile(user, { nickname: '保留账号', adult: true, sensitiveConsent: true }, key());
+  const roomId = api.createRoom(user, draft(), key()).roomId;
+  const consent = store.get('SELECT consent_version,consent_at FROM users WHERE id=?', user.id);
+  store.db.exec('ALTER TABLE users DROP COLUMN avatar; PRAGMA user_version=2'); store.close();
+  store = openStore(path); api = createService(store); user = api.authenticate(login.token);
+  assert.equal(api.me(user).user.nickname, '保留账号'); assert.equal(api.me(user).user.avatar, '🌱');
+  assert.equal(api.snapshot(user, roomId).room.id, roomId);
+  assert.deepEqual(store.get('SELECT consent_version,consent_at FROM users WHERE id=?', user.id), consent);
+  api.updateProfile(user, { nickname: '新昵称', avatar: '🐼' }, key()); store.close();
+  store = openStore(path); api = createService(store); user = api.authenticate(login.token);
+  assert.equal(api.me(user).user.avatar, '🐼'); assert.equal(api.me(user).user.nickname, '新昵称'); store.close();
+});

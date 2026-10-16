@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes, randomInt, createHash, timingSafeEqual } from 'node:crypto';
-import { ensure, text, number, RULES, INTENSITIES, CONSENT_VERSION } from '../../packages/contracts/index.mjs';
+import { ensure, text, number, RULES, INTENSITIES, CONSENT_VERSION, AVATARS } from '../../packages/contracts/index.mjs';
 import { businessDate, addDays, endDate, remainingDays, calculateGoal, normalizeWeight, stats, rankCoverage, daysBetween } from '../../packages/domain/index.mjs';
 import { dispatchCode, verifyProviderCode, SmsDeliveryError } from './sms.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -36,7 +36,7 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     ensure(session, 'UNAUTHENTICATED', '登录已过期，请重新登录', 401);
     return session;
   }
-  const publicUser = user => ({ id: user.id, nickname: user.nickname, phone: user.phone.startsWith('test:') ? '测试身份' : user.phone.slice(0, 3) + '****' + user.phone.slice(-4), consent: user.consent_version === CONSENT_VERSION, currentRoomId: user.current_room_id, csrf: user.csrf });
+  const publicUser = user => ({ id: user.id, nickname: user.nickname, avatar: user.avatar, phone: user.phone.startsWith('test:') ? '测试身份' : user.phone.slice(0, 3) + '****' + user.phone.slice(-4), consent: user.consent_version === CONSENT_VERSION, currentRoomId: user.current_room_id, csrf: user.csrf });
   function sessionFor(phone, nickname) {
     let user = get('SELECT * FROM users WHERE phone=?', phone);
     if (!user) {
@@ -187,8 +187,14 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     updateProfile(user, body, key) {
       return mutate(user, key, 'profile', body, () => {
         const nickname = text(body.nickname, RULES.nicknameLength, '昵称'); ensure(nickname, 'VALIDATION', '请填写昵称');
-        ensure(body.adult === true && body.sensitiveConsent === true, 'CONSENT_REQUIRED', '请分别确认年龄及数据使用说明', 403);
-        run('UPDATE users SET nickname=?,consent_version=?,consent_at=? WHERE id=?', nickname, CONSENT_VERSION, stamp(), user.id);
+        const current = get('SELECT * FROM users WHERE id=?', user.id);
+        const avatar = body.avatar === undefined ? current.avatar : body.avatar;
+        ensure(AVATARS.includes(avatar), 'VALIDATION', '请选择一个提供的 emoji 头像');
+        if (current.consent_version !== CONSENT_VERSION) {
+          ensure(body.adult === true && body.sensitiveConsent === true, 'CONSENT_REQUIRED', '请分别确认年龄及数据使用说明', 403);
+          run('UPDATE users SET consent_version=?,consent_at=? WHERE id=?', CONSENT_VERSION, stamp(), user.id);
+        }
+        run('UPDATE users SET nickname=?,avatar=? WHERE id=?', nickname, avatar, user.id);
         return { ok: true };
       });
     },
@@ -277,11 +283,11 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
     snapshot(user, roomId, range = 28) {
       ensure([7, 28, 90].includes(range), 'VALIDATION', '查询区间不正确');
       const { room } = roomFor(user, roomId);
-      const members = all("SELECT m.*,u.nickname FROM members m JOIN users u ON u.id=m.user_id WHERE room_id=? AND m.state='JOINED' ORDER BY joined_order", roomId).map(m => {
+      const members = all("SELECT m.*,u.nickname,u.avatar FROM members m JOIN users u ON u.id=m.user_id WHERE room_id=? AND m.state='JOINED' ORDER BY joined_order", roomId).map(m => {
         const records = all('SELECT date,weight,version FROM records WHERE room_id=? AND user_id=? ORDER BY date', roomId, m.user_id);
         const summary = room.start_date ? stats(room, m, records, today(), range) : null;
         const last = records.at(-1), missingDays = room.start_date ? (last ? daysBetween(last.date, today()) : daysBetween(m.join_date, today()) + 1) : 0;
-        return { id: m.user_id, memberId: m.id, nickname: m.nickname, ready: !!m.ready, startWeight: m.start_weight, target: m.target, algorithm: m.algorithm, joined_order: m.joined_order, joinDate: m.join_date, records, summary, missingDays };
+        return { id: m.user_id, memberId: m.id, nickname: m.nickname, avatar: m.avatar, ready: !!m.ready, startWeight: m.start_weight, target: m.target, algorithm: m.algorithm, joined_order: m.joined_order, joinDate: m.join_date, records, summary, missingDays };
       });
       let displayMembers = members;
       if (room.status === 'ENDED') {
@@ -333,7 +339,7 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
       }) };
     },
     exportData(user) {
-      return { exportedAt: stamp(), user: { id: user.id, nickname: user.nickname, phone: user.phone }, memberships: all('SELECT room_id,join_date,state,height,start_weight,target,algorithm FROM members WHERE user_id=?', user.id), records: all('SELECT room_id,date,weight,version FROM records WHERE user_id=? ORDER BY date', user.id) };
+      return { exportedAt: stamp(), user: { id: user.id, nickname: user.nickname, avatar: user.avatar, phone: user.phone }, memberships: all('SELECT room_id,join_date,state,height,start_weight,target,algorithm FROM members WHERE user_id=?', user.id), records: all('SELECT room_id,date,weight,version FROM records WHERE user_id=? ORDER BY date', user.id) };
     },
     support(user, body, key) { return mutate(user, key, 'support', body, () => { const message = text(body.message, 1000, '问题描述'); ensure(message, 'VALIDATION', '请描述你的问题'); const requestId = id(); run('INSERT INTO support_requests(id,user_id,message,created_at) VALUES(?,?,?,?)', requestId, user.id, message, stamp()); return { requestId, status: 'OPEN' }; }); },
     supportList(user) { return all('SELECT id,message,status,created_at createdAt FROM support_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 100', user.id); },

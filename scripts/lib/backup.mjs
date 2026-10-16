@@ -31,7 +31,8 @@ export function inspectDatabase(path) {
     if (integrity.length !== 1 || Object.values(integrity[0])[0] !== 'ok') throw new Error('DATABASE_INTEGRITY');
     if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('DATABASE_FOREIGN_KEYS');
     const version = db.prepare('PRAGMA user_version').get().user_version;
-    if (![1, 2].includes(version)) throw new Error('DATABASE_VERSION');
+    if (![1, 2, 3].includes(version)) throw new Error('DATABASE_VERSION');
+    if (version >= 3 && !db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'avatar')) throw new Error('DATABASE_TABLES');
     if (version >= 2 && (!db.prepare('PRAGMA table_info(otp)').all().some(c => c.name === 'delivery_state') || !db.prepare("SELECT name FROM sqlite_schema WHERE name='privacy_meta'").get())) throw new Error('DATABASE_TABLES');
     const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name").all();
     const names = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(r => r.name);

@@ -135,7 +135,7 @@ test('v1 migration preserves accounts, invalidates legacy OTP, and never downgra
     db.prepare('INSERT INTO users(id,phone,nickname,created_at) VALUES(?,?,?,?)').run('old-user', phone, '原账号', '2026-10-14');
     db.prepare('INSERT INTO otp VALUES(?,?,?,?,0)').run(phone, 'old-hash', Date.now() + 100000, Date.now()); db.close();
     store = openStore(path); assert.equal(store.get('SELECT nickname FROM users').nickname, '原账号');
-    assert.equal(store.get('SELECT count(*) n FROM otp').n, 0); assert.equal(store.get('PRAGMA user_version').user_version, 2);
-    store.close(); store = openStore(path); assert.equal(store.get('PRAGMA user_version').user_version, 2);
+    assert.equal(store.get('SELECT count(*) n FROM otp').n, 0); assert.equal(store.get('PRAGMA user_version').user_version, 3);
+    store.close(); store = openStore(path); assert.equal(store.get('PRAGMA user_version').user_version, 3);
   } finally { store?.close(); rmSync(dir, { recursive: true, force: true }); }
 });

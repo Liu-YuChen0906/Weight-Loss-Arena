@@ -35,8 +35,8 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(origin + '/#login');
   await page.locator('[name=phone]').waitFor();
-  assert.match(await page.locator('#environment').textContent(), /短信试用/);
-  assert.equal(await page.getByText('点击获取验证码会发送真实短信并计费。', { exact: false }).count(), 1);
+  assert.equal(await page.locator('#environment').isVisible(), false);
+  assert.equal(await page.getByText('点击获取验证码会发送真实短信并计费。', { exact: false }).count(), 0);
   await page.locator('[name=phone]').fill('13900009001');
   await page.getByRole('button', { name: '获取验证码', exact: true }).click();
   await page.getByText('短信请求已受理，请留意手机验证码', { exact: true }).waitFor();
