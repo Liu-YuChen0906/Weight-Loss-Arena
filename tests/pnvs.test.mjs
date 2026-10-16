@@ -77,6 +77,16 @@ test('PNVS treats only a matching successful PASS as verified and redacts every 
   }
 });
 
+test('PNVS known balance errors are classified without exposing provider response or credentials', async t => {
+  for (const Code of ['RESOURCE_NOT_ENOUGH', 'isv.OUT_OF_SERVICE']) {
+    const deliver = createAliyunPnvs(config, { fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ Code, Message: phone + config.accessKeySecret }) }) });
+    const f = fixture(t); const api = createService(f.store, { smsMode: 'provider', deliverCode: deliver, clock: () => f.time.value });
+    await assert.rejects(api.requestCode({ phone }, 'one'), error => error.code === 'SMS_BALANCE_INSUFFICIENT' && error.details.retryAfter === 60 && !error.message.includes(phone) && !error.message.includes(config.accessKeySecret));
+    assert.equal(f.store.get('SELECT delivery_state FROM otp').delivery_state, 'FAILED');
+    assert.equal(f.store.get('SELECT count(*) n FROM users').n, 0);
+  }
+});
+
 test('PNVS flow stores no OTP hash, consumes once, and restores the same account after re-login', async t => {
   const checks = [], f = fixture(t, async input => { checks.push(input); return { status: 'PASS' }; });
   const sent = await f.api.requestCode({ phone }, 'one');

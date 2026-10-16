@@ -37,3 +37,18 @@ test('old session response cannot release a new session request identity', async
   assert.equal([...pendingKeys.values()][0], 'session-key-2');
   resolvers[1](Response.json({ roomId: 'new' })); await current; assert.equal(pendingKeys.size, 0);
 });
+
+test('authentication 503 retains actionable SMS error and cooldown instead of a record-save warning', async () => {
+  for (const code of ['SMS_UNAVAILABLE', 'SMS_DELIVERY_UNKNOWN', 'SMS_VERIFICATION_UNAVAILABLE', 'SMS_BALANCE_INSUFFICIENT']) {
+    const pendingKeys = new Map();
+    const request = createRequester({ pendingKeys, createKey: () => 'auth-key', fetcher: async () => Response.json({ error: { code, message: '短信服务余额不足', details: { retryAfter: 47 } } }, { status: 503 }) });
+    await assert.rejects(request('/auth/code', 'POST', {}), error => error.code === code && error.status === 503 && error.details.retryAfter === 47 && error.message === '短信服务余额不足');
+    assert.equal(pendingKeys.size, 0);
+  }
+});
+
+test('lost SMS response starts conservative cooldown and never claims record-save uncertainty', async () => {
+  const request = createRequester({ createKey: () => 'send-key', fetcher: async () => { throw new Error('lost connection'); } });
+  await assert.rejects(request('/auth/code', 'POST', {}), error => error.code === 'SMS_DELIVERY_UNKNOWN' && error.details.retryAfter === 60 && !error.message.includes('保存'));
+  await assert.rejects(request('/auth/login', 'POST', {}), error => error.code === 'AUTH_RESULT_UNKNOWN' && error.message.includes('刷新页面核对登录状态'));
+});

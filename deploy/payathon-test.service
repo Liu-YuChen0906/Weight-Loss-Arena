@@ -8,6 +8,7 @@ User=payathon-test
 Group=payathon-test
 WorkingDirectory=/opt/payathon-test/current
 EnvironmentFile=/etc/payathon-test/app.env
+EnvironmentFile=-/etc/payathon-test/sms-auth.env
 ExecStart=/opt/payathon-tools/node-v24.19.0-linux-x64/bin/node apps/api/server.mjs
 Restart=on-failure
 RestartSec=3

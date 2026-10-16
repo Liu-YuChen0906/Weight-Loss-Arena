@@ -15,6 +15,22 @@ let page = routePage();
 const pendingKeys = new Map();
 const request = createRequester({ pendingKeys });
 let appMode = 'local';
+const smsCooldowns = new Map();
+let smsCooldownTimer;
+function syncSmsCooldown() {
+  clearTimeout(smsCooldownTimer);
+  for (const [phone, until] of smsCooldowns) if (until <= Date.now()) smsCooldowns.delete(phone);
+  const element = $('[data-act="send-code"]'), input = $('[name="phone"]');
+  if (!element || !input) return;
+  const remaining = Math.max(0, Math.ceil(((smsCooldowns.get(input.value.trim()) || 0) - Date.now()) / 1000));
+  element.textContent = remaining ? `${remaining} 秒后重试` : '获取验证码';
+  element.disabled = busy || remaining > 0;
+  if (remaining) smsCooldownTimer = setTimeout(syncSmsCooldown, 250);
+}
+function setSmsCooldown(phone, seconds) {
+  if (Number.isFinite(seconds) && seconds > 0 && seconds <= 60) smsCooldowns.set(phone, Date.now() + seconds * 1000);
+  syncSmsCooldown();
+}
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => $('#toast').classList.remove('show'), 4200); }
 function syncBusyButtons() {
   if (!busy) return;
@@ -105,7 +121,7 @@ function homePage() {
 }
 function loginPage() {
   if (appMode === 'test') return `<div class="form-shell">${back()}${head('联机测试登录', '每人使用一个体验码；同一码可重新登录')}<form class="card" data-form="test-login">${field('体验码', 'code', '', 'type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴你的专属体验码" maxlength="24" required')}<p class="sub">只使用示例身高、体重和昵称，请勿填写真实个人数据。</p><p class="error" id="form-error" role="alert"></p><button class="btn full" type="submit">进入测试</button></form></div>`;
-  return `<div class="form-shell">${back()}${head('手机登录', '使用验证码登录或创建账号')}<form class="card" data-form="login">${field('手机号', 'phone', loginPhone, 'type="tel" inputmode="tel" autocomplete="tel" placeholder="11 位手机号" maxlength="11" required')}<div class="code-input">${field('验证码', 'code', '', 'type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位验证码" required')}${button('获取验证码', 'send-code', 'text-btn')}</div><div id="development-code" class="notice" ${developmentCode ? '' : 'hidden'}>本地测试验证码：<strong>${esc(developmentCode)}</strong><br>未发送短信，请使用测试手机号。</div><p class="error" id="form-error" role="alert"></p><button class="btn full" type="submit">登录</button></form></div>`;
+  return `<div class="form-shell">${back()}${head('手机登录', '使用验证码登录或创建账号')}${appMode === 'sms-trial' ? '<p class="notice">点击获取验证码会发送真实短信并计费。仅测试手机号登录，身高、体重和昵称请使用示例值。</p>' : ''}<form class="card" data-form="login">${field('手机号', 'phone', loginPhone, 'type="tel" inputmode="tel" autocomplete="tel" placeholder="11 位手机号" maxlength="11" required')}<div class="code-input">${field('验证码', 'code', '', 'type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6 位验证码" required')}${button('获取验证码', 'send-code', 'text-btn')}</div><div id="development-code" class="notice" ${developmentCode ? '' : 'hidden'}>本地测试验证码：<strong>${esc(developmentCode)}</strong><br>未发送短信，请使用测试手机号。</div><p class="error" id="form-error" role="alert"></p><button class="btn full" type="submit">登录</button></form></div>`;
 }
 function profilePage() { return `<div class="form-shell">${back()}${head('开始之前')}<form class="card" data-form="profile">${field('昵称', 'nickname', user?.nickname, 'maxlength="20" autocomplete="nickname" required')}<label class="check"><input type="checkbox" name="adult" required><span>我已年满 18 岁</span></label><label class="check"><input type="checkbox" name="sensitiveConsent" required><span>我同意处理身高、体重和目标，用于本期记录与分析。身高仅用于计算，体重、目标和趋势按加入时确认的规则组内共享。${button('查看数据说明', 'privacy', 'text-btn')}</span></label><p class="error" id="form-error" role="alert"></p><button type="submit" class="btn full">确认并继续</button></form></div>`; }
 function periodOptions(editing = false) { const d = editing ? editDraft : draft; return `<fieldset class="field period-field"><legend class="field-label">本期天数</legend><div class="triple period-options">${[14, 28, 56].map(n => button(`<span class="period-value">${n}<span>天</span></span><span class="period-check">${!d.custom && d.days === n ? '✓' : ''}</span>`, `${editing ? 'edit-' : ''}days:${n}`, `period-choice ${!d.custom && d.days === n ? 'active' : ''}`, `aria-pressed="${!d.custom && d.days === n}"`)).join('')}<label id="custom-option" class="period-choice period-custom ${d.custom ? 'active' : ''}"><input name="days" type="text" inputmode="numeric" aria-label="自定义天数" autocomplete="off" placeholder="自定义" value="${d.custom ? esc(d.days) : ''}"><span class="period-check">${d.custom ? '✓' : ''}</span></label></div><div id="days-error" class="error"></div></fieldset>`; }
@@ -171,6 +187,7 @@ function render() {
   let content = '';
   if (page === 'login') content = loginPage(); else if (page === 'profile') content = profilePage(); else if (page === 'create') content = createPage(); else if (page === 'join') content = joinPage(); else if (page === 'invite') content = invitePage(); else if (page === 'lobby') content = lobbyPage(); else if (page === 'group') content = groupPage(); else if (page === 'record') content = recordPage(); else if (page === 'data') content = dataPage(); else if (page.startsWith('analysis/')) content = analysisPage(); else content = `${back()}<div class="card empty">页面不存在</div>`;
   mountShell(content);
+  syncSmsCooldown();
   syncBusyButtons();
 }
 async function refresh({ force = false, roomId } = {}) {
@@ -209,16 +226,19 @@ async function act(action, element) {
   if (action.startsWith('go:')) { if (action === 'go:record' && !uncertainRecord) recordDate = ''; navigate(action.slice(3)); if (page === 'group') await showReminders(); return; }
   if (action === 'close') { closeModal(); return; }
   if (action === 'point') { toast(element.dataset.label); return; }
-  if (action === 'privacy') { modal('隐私与数据', '<p>身高用于计算本期目标，体重、目标和趋势用于记录与组内分析。未加入小组的人无法查看身体数据。新加入的成员可查看本期历史。</p>' + (appMode === 'test' ? '<p>这是使用专属体验码的联机测试环境，请只使用合成数据，不填写真实手机号或健康数据。数据保存在独立测试库中，账号与支持中可取回本人测试数据或注销删除。体验码等同于测试账号的登录凭据，请只把小组邀请链接发给朋友，不分享自己的体验码。</p>' : '<p>本地开发版本只在本机运行。短信尚未接入；请使用合成数据测试。开发数据保存在本机数据库，账号与支持中可取回本人数据或注销删除。正式保留期限、备份删除及支持时限将在开放试用前确定。</p>') + '<p>目标是产品挑战规则，不是医学建议；效果及难度公平性尚未验证。</p>'); return; }
+  if (action === 'privacy') { modal('隐私与数据', '<p>身高用于计算本期目标，体重、目标和趋势用于记录与组内分析。未加入小组的人无法查看身体数据。新加入的成员可查看本期历史。</p>' + (appMode === 'sms-trial' ? '<p>这是手机短信试用环境：手机号用于阿里云 PNVS 验证码发送、核验和恢复同一账号，手机号保存在独立试用数据库中。请只填写示例昵称、身高和体重。本人数据可导出或注销；历史备份不会立刻物理删除，恢复时需重放注销清单。正式保存政策尚未确定，当前不用于真实健康数据试用。</p>' : appMode === 'test' ? '<p>这是使用专属体验码的联机测试环境，请只使用合成数据，不填写真实手机号或健康数据。数据保存在独立测试库中，账号与支持中可取回本人测试数据或注销删除。体验码等同于测试账号的登录凭据，请只把小组邀请链接发给朋友，不分享自己的体验码。</p>' : '<p>本地开发版本只在本机运行。短信尚未接入；请使用合成数据测试。开发数据保存在本机数据库，账号与支持中可取回本人数据或注销删除。正式保留期限、备份删除及支持时限将在开放试用前确定。</p>') + '<p>目标是产品挑战规则，不是医学建议；效果及难度公平性尚未验证。</p>'); return; }
   if (action === 'create' || action === 'join') { if (!await ensureUser(action)) return; if (action === 'create' && user.currentRoomId) { toast('你已在一个未结束小组中'); await loadCurrent(); return; } navigate(action); return; }
   if (action === 'login') { nextPage = 'home'; navigate('login'); return; }
   if (action === 'send-code') {
     developmentCode = ''; $('#development-code').hidden = true;
-    loginPhone = $('[name="phone"]').value.trim(); const r = await api('/auth/code', 'POST', { phone: loginPhone }, { allowAnonymous: true });
+    const phone = $('[name="phone"]').value.trim(); loginPhone = phone;
+    let r;
+    try { r = await api('/auth/code', 'POST', { phone }, { allowAnonymous: true }); }
+    catch (error) { setSmsCooldown(phone, error.details?.retryAfter); throw error; }
+    setSmsCooldown(phone, r.retryAfter);
     developmentCode = r.developmentCode || ''; const panel = $('#development-code'); panel.hidden = !developmentCode; panel.innerHTML = `本地测试验证码：<strong>${esc(developmentCode)}</strong><br>未发送短信，请使用测试手机号。`; delete element.dataset.busy;
     if (r.deliveryStatus === 'ACCEPTED') toast(r.message);
-    element.textContent = '60 秒后重试'; element.disabled = true;
-    let remaining = 60; const cooldown = setInterval(() => { remaining--; if (!element.isConnected || remaining <= 0) { clearInterval(cooldown); element.disabled = false; element.textContent = '获取验证码'; } else element.textContent = remaining + ' 秒后重试'; }, 1000); return;
+    return;
   }
   if (action.startsWith('days:')) { draft.days = Number(action.split(':')[1]); draft.custom = false; render(); return; }
   if (action.startsWith('edit-days:')) { editDraft.days = Number(action.split(':')[1]); editDraft.custom = false; editRoomModal(); return; }
@@ -259,7 +279,7 @@ async function act(action, element) {
   if (action === 'account') { modal('账号与支持', `<p>${esc(user.nickname)} · ${esc(user.phone)}</p>${button('修改昵称与查看同意', 'profile', 'settings-row')}${button('取回本人数据', 'export', 'settings-row')}${button('提交支持请求', 'support', 'settings-row')}${button('我的支持请求', 'support-list', 'settings-row')}${button('退出登录', 'logout', 'settings-row')}${button('注销并删除数据', 'delete', 'settings-row')}`, '', true); return; }
   if (action === 'profile') { nextPage = 'home'; navigate('profile'); return; }
   if (action === 'export') { const result = await api('/me/export'); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })); link.download = '上秤-本人数据.json'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); return; }
-  if (action === 'support') { modal('提交支持请求', '<form id="support-form" data-form="support"><label class="field"><span class="field-label">问题描述</span><textarea name="message" maxlength="1000" required placeholder="请勿填写验证码或其他人的身体数据"></textarea></label><p class="sub">' + (appMode === 'test' ? '请求保存在测试环境，需由开发者查看处理。' : '请求保存在本机，需由本地开发者查看处理。') + '</p><p id="modal-error" class="error"></p></form>', '<button class="btn full" form="support-form" type="submit">提交</button>' + button('取消', 'close', 'cancel'), true); return; }
+  if (action === 'support') { modal('提交支持请求', '<form id="support-form" data-form="support"><label class="field"><span class="field-label">问题描述</span><textarea name="message" maxlength="1000" required placeholder="请勿填写验证码或其他人的身体数据"></textarea></label><p class="sub">' + (appMode !== 'local' ? '请求保存在测试环境，需由开发者查看处理。' : '请求保存在本机，需由本地开发者查看处理。') + '</p><p id="modal-error" class="error"></p></form>', '<button class="btn full" form="support-form" type="submit">提交</button>' + button('取消', 'close', 'cancel'), true); return; }
   if (action === 'support-list') { const result = await api('/support'); modal('我的支持请求', result.requests.length ? result.requests.map(r => `<section class="support-item"><strong>${esc(r.message)}</strong><p class="sub">${r.status === 'OPEN' ? '待处理' : '已处理'} · ${esc(r.id.slice(0, 8))}</p></section>`).join('') : '<div class="empty">没有支持请求</div>', '', true); return; }
   if (action === 'logout') { await api('/auth/logout', 'POST', {}); user = null; clearPrivate(); navigate('home'); return; }
   if (action === 'delete') { modal('注销并删除数据', '<form id="delete-form" data-form="delete"><p>将立即删除本人的账号、会话、准备和记录，其他成员无法再读取这些数据。此操作不可恢复。</p>' + field('输入「注销并删除我的数据」确认', 'confirm', '', 'autocomplete="off" required') + '<p id="modal-error" class="error"></p></form>', '<button class="btn full" type="submit" form="delete-form">确认注销</button>' + button('取消', 'close', 'cancel'), true); return; }
@@ -299,7 +319,7 @@ async function submit(form) {
       modal('修改今日记录', `<div class="record-edit-values" role="group" aria-label="记录修改前后对照"><div class="record-edit-before"><span>原记录</span><strong>${old?.weight.toFixed(2) ?? '—'}<small>kg</small></strong></div><div class="record-edit-after"><span>修改为</span><strong>${round2(kg).toFixed(2)}<small>kg</small></strong></div><span class="record-edit-arrow" aria-hidden="true">→</span></div><p id="modal-error" class="error" role="alert"></p>`, btn('确认修改', 'confirm-record', 'full') + button('取消', 'close', 'cancel'), false, 'record-edit-confirm');
     } else await commitRecord();
   }
-  else if (form.dataset.form === 'support') { const result = await api('/support', 'POST', { message: values.message }); modal('请求已保存', `<p>编号：${esc(result.requestId.slice(0, 8))}</p><p>等待${appMode === 'test' ? '' : '本地'}开发者处理，可在“我的支持请求”查看状态。</p>`); }
+  else if (form.dataset.form === 'support') { const result = await api('/support', 'POST', { message: values.message }); modal('请求已保存', `<p>编号：${esc(result.requestId.slice(0, 8))}</p><p>等待${appMode !== 'local' ? '' : '本地'}开发者处理，可在“我的支持请求”查看状态。</p>`); }
   else if (form.dataset.form === 'delete') { await api('/me', 'DELETE', { confirm: values.confirm }); user = null; clearPrivate(); navigate('home'); toast('账号及本人数据已删除'); }
 }
 async function run(action) {
@@ -315,7 +335,7 @@ async function run(action) {
     }
     if (e.code === 'FORBIDDEN') { clearPrivate(); navigate('home'); }
   }
-  finally { busy = false; document.querySelectorAll('button[data-busy]').forEach(b => { b.disabled = false; delete b.dataset.busy; }); if (focus?.isConnected && focus.closest('.nav-track') && document.activeElement === document.body) focus.focus({ preventScroll: true }); }
+  finally { busy = false; document.querySelectorAll('button[data-busy]').forEach(b => { b.disabled = false; delete b.dataset.busy; }); syncSmsCooldown(); if (focus?.isConnected && focus.closest('.nav-track') && document.activeElement === document.body) focus.focus({ preventScroll: true }); }
 }
 document.addEventListener('click', event => {
   const element = event.target.closest('[data-act]'); if (!element || element.disabled) return;
@@ -330,6 +350,7 @@ document.addEventListener('click', event => {
 document.addEventListener('submit', event => { const form = event.target.closest('[data-form]'); if (!form) return; event.preventDefault(); run(() => submit(form)); });
 document.addEventListener('input', event => {
   const input = event.target, form = input.closest('form'); if (!form) return;
+  if (form.dataset.form === 'login' && input.name === 'phone') { loginPhone = input.value.trim(); syncSmsCooldown(); }
   const d = form.dataset.form === 'edit' ? editDraft : draft;
   if (['create', 'edit'].includes(form.dataset.form)) { if (input.name === 'days') { d.days = input.value; d.custom = true; $('#days-error').textContent = ''; } else if (['name', 'intro'].includes(input.name)) d[input.name] = input.value; }
   if (form.dataset.form === 'record' && input.name === 'weight') recordKg = input.value.trim() && Number.isFinite(Number(input.value)) ? Number(input.value) / (unit === 'jin' ? 2 : 1) : null;
@@ -357,14 +378,14 @@ async function poll() {
   }
   timer = setTimeout(poll, Math.min(60000, 5000 * 2 ** Math.min(pollFailures, 4)));
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); else poll(); });
+document.addEventListener('visibilitychange', () => { syncSmsCooldown(); if (document.hidden) clearTimeout(timer); else poll(); });
 async function boot() {
   clearTimeout(timer);
   try {
     const config = await api('/config', 'GET', undefined, { allowAnonymous: true }); appMode = config.mode;
-    const notice = $('#environment'); notice.hidden = appMode !== 'test';
-    notice.textContent = appMode === 'test' ? '联机测试 · 仅使用合成数据' : '';
-    document.body.classList.toggle('test-environment', appMode === 'test');
+    const notice = $('#environment'); notice.hidden = appMode === 'local';
+    notice.textContent = appMode === 'sms-trial' ? '短信试用 · 身体数据请用示例值' : appMode === 'test' ? '联机测试 · 仅使用合成数据' : '';
+    document.body.classList.toggle('test-environment', appMode !== 'local');
   } catch (e) { toast('无法确认运行环境，请刷新重试'); return; }
   try { const result = await api('/me', 'GET', undefined, { allowAnonymous: true }); user = result.user; today = result.today; if (user.currentRoomId || routeRoom()) await refresh(); }
   catch (e) { if (e.code !== 'UNAUTHENTICATED') toast(e.message); if (e.code === 'FORBIDDEN' && user) { data = null; page = 'home'; history.replaceState(null, '', '/#home'); } else { user = null; data = null; } }

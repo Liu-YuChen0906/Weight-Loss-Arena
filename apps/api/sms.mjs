@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 
 export class SmsDeliveryError extends Error {
-  constructor(outcome = 'UNKNOWN') { super('SMS delivery unavailable'); this.outcome = outcome; }
+  constructor(outcome = 'UNKNOWN', reason) { super('SMS delivery unavailable'); this.outcome = outcome; if (reason === 'BALANCE') this.reason = reason; }
 }
 
 // Bounds apply even to an adapter that ignores AbortSignal. Never automatically retry.
@@ -104,9 +104,9 @@ export function createAliyunPnvs(config, { fetchImpl = fetch, clock = () => new 
       const response = await fetchImpl('https://dypnsapi.aliyuncs.com/?' + query, { method: 'POST', headers, signal, redirect: 'error' });
       const body = await response.json();
       if (response.ok && body?.Code === 'OK' && body.Success === true) return body.Model;
-      if (response.status < 500 && typeof body?.Code === 'string' && body.Code !== 'OK') throw new SmsDeliveryError('FAILED');
+      if (response.status < 500 && typeof body?.Code === 'string' && body.Code !== 'OK') throw new SmsDeliveryError('FAILED', ['RESOURCE_NOT_ENOUGH', 'isv.OUT_OF_SERVICE'].includes(body.Code) ? 'BALANCE' : undefined);
       throw new SmsDeliveryError();
-    } catch (error) { throw new SmsDeliveryError(error instanceof SmsDeliveryError ? error.outcome : 'UNKNOWN'); }
+    } catch (error) { throw new SmsDeliveryError(error instanceof SmsDeliveryError ? error.outcome : 'UNKNOWN', error instanceof SmsDeliveryError ? error.reason : undefined); }
   }
   function validate(phone, dispatchId) {
     if (!/^1[3-9]\d{9}$/.test(phone) || typeof dispatchId !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(dispatchId)) throw new SmsDeliveryError('FAILED');

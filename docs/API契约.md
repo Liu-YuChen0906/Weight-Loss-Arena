@@ -48,7 +48,7 @@
 
 ## 2026-10-14 短信与删除恢复补充
 
-验证码状态为 `PENDING → ACCEPTED／FAILED／UNKNOWN`，开发模式直接为 `DEVELOPMENT`。只有 ACCEPTED／DEVELOPMENT 可以验证；投递器必须显式返回 `{status:'ACCEPTED'}`，空结果不能表示成功。服务层默认 8 秒超时并取消请求，不自动重发；明确拒绝返回 `SMS_UNAVAILABLE`，网络、无效响应或超时返回 `SMS_DELIVERY_UNKNOWN`。失败仍保留冷却；过期清理、遗留 PENDING 转 UNKNOWN 和 dispatch_id 条件更新防止迟到结果影响新码。缺少适配器时不创建 OTP。阿里云适配器已实现，但运行模式仍只有 local／test；环境变量不自动开启真实短信或正式上线。
+验证码状态为 `PENDING → ACCEPTED／FAILED／UNKNOWN`，开发模式直接为 `DEVELOPMENT`。只有 ACCEPTED／DEVELOPMENT 可以验证；投递器必须显式返回 `{status:'ACCEPTED'}`，空结果不能表示成功。服务层默认 8 秒超时并取消请求，不自动重发；明确拒绝返回 `SMS_UNAVAILABLE`，网络、无效响应或超时返回 `SMS_DELIVERY_UNKNOWN`。失败仍保留冷却；过期清理、遗留 PENDING 转 UNKNOWN 和 dispatch_id 条件更新防止迟到结果影响新码。缺少适配器时不创建 OTP。当时阿里云适配器已实现、运行模式仅 local／test；新增 sms-trial 部署规则见下文，配置本身仍不等于正式上线。
 
 `scripts/sms-check.mjs` 是离线配置检查，不是业务 API；只返回字段名与问题，不输出值，不联网／发送／打开数据库。配置齐全返回退出码 0，缺项／格式无效为 1；即使 `ok:true` 仍标明 `scope:CONFIGURATION_ONLY`、`deliveryVerified:false`。预检与适配器共用配置校验，官方 ACS3 固定样例通过不代替真实供应商验签。
 
@@ -64,7 +64,25 @@
 
 同一服务实例中，每个手机号只允许一个核验请求，核验期间重复核验或重发返回 `AUTH_IN_PROGRESS`（409），不额外消耗验证码尝试次数。五次无效码后拒绝核验；过期、删除或新流水号不能消费旧结果。供应商报错、格式异常、网络及超时（默认 8 秒）返回脱敏 `SMS_VERIFICATION_UNAVAILABLE`（503），本次 OTP 置 UNKNOWN 并要求重新获取；迟到成功不能复活会话。账号／会话只在最终成功事务内创建。当前仍是单进程实现，公开多实例运行前需持久核验租约。
 
-离线检查同时支持普通短信和 PNVS 各自模板格式，不联网／发短信／输出值／打开数据库。配齐也不自动启用真实服务；`loadRuntime` 继续只允许既有 local／test 配置。
+离线检查同时支持普通短信和 PNVS 各自模板格式，不联网／发短信／输出值／打开数据库。配齐也不自动启用真实服务；local／test 原限制继续保留；下文的独立 sms-trial 为本轮用户自测开放，production 仍拒绝。
+
+## 2026-10-15 手机短信试用部署
+
+新增 `APP_MODE=sms-trial`，独立于 local／test。启动要求回环监听、精确 HTTPS origin、与本地／旧测试库分离的持久路径、`SMS_MODE=provider`、`SMS_PROVIDER=aliyun-pnvs`、有效格式凭据和整数 `SMS_DAILY_LIMIT`（1–20）；程序注入也必须有远程 verifyCode 和日上限。当前配置值为 10，不提供体验码登录（404），不向客户端返回开发验证码。
+
+`GET /config` 返回 `mode:sms-trial, login:phone, syntheticOnly:true, realSms:true, smsDailyLimit:10`；syntheticOnly 约束身体数据，手机号真实验证。`GET /health` 的 mode 为 sms-trial，监控按 APP_MODE 核对。外部请求沿用精确 Host／Origin 与来源校验，Cookie 带 Secure；客户端显示短信计费与示例身体数据说明。
+
+全站发送请求计数用 `sms-global:<北京时间日期>` 存储于 rate_limits，在调用供应商前递增；发送失败／未知也计数，重启不重置，跨北京日期更换计数键。既有手机号／来源上限与冷却同时适用，超额返回 RATE_LIMITED（429）。发送和平台验签是否实际可用仍待用户真实联调。
+
+用户已授权旧测试账号清空。`reset-test-data.mjs --reset-legacy-test` CLI 固定仅允许旧 test.sqlite，先确认账号均为 test: 身份，经独立删除清单清除所有账号，再清理空小组／验证码／限流；有手机号账号就拒绝。首次切换部署脚本要求新 phone-trial.sqlite 不存在，防止重复部署擦掉新用户。历史备份保留，清空不等于物理删除所有备份。
+
+## 2026-10-16 短信失败与冷却修复
+
+`POST /auth/code` 成功及投递失败响应的 `retryAfter` 为当前剩余冷却秒数；同号码冷却中返回 RATE_LIMITED（429）及 `error.details.retryAfter`，例如已等待 13.5 秒后返回 47，不反复显示固定 60。失败仍遵守原冷却与全站上限，不自动重发或清零额度。
+
+认证路径 `/auth/code`／`auth/login` 的明确 SMS_UNAVAILABLE、SMS_DELIVERY_UNKNOWN、SMS_VERIFICATION_UNAVAILABLE、SMS_BALANCE_INSUFFICIENT 即使是 503，也保留脱敏业务提示／详情，不统一转换为身体记录的保存未知。已知 PNVS RESOURCE_NOT_ENOUGH／isv.OUT_OF_SERVICE 只归类为余额／套餐不足，不透出供应商原始报文。其他业务写入 5xx 继续保留幂等键和未知结果保护。验证码请求连接／JSON 结果未知时保守等待 60 秒；登录未知提示刷新核对会话，不声称注册失败。
+
+前端倒计时按手机号及绝对截止时间更新当前 DOM，成功、失败、429 都可启动；busy 恢复不会解除冷却禁用，导航重绘／后台返回继续校正。刷新不保存手机号到新浏览器存储，首次点击由服务端 429 恢复剩余值。余额恢复、账单归属和真实设备重登仍是外部验收事项。
 
 ## 下一阶段规划（尚未完成）
 

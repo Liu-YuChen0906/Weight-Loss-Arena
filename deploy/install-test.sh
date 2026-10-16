@@ -13,7 +13,9 @@ else
   install -m 640 -o root -g payathon-test /tmp/payathon-test-accounts.json /etc/payathon-test/accounts.json
 fi
 rm -f /tmp/payathon-test-accounts.json
-install -m 640 -o root -g payathon-test deploy/test.env.example /etc/payathon-test/app.env
+if [ ! -e /etc/payathon-test/app.env ]; then
+  install -m 640 -o root -g payathon-test deploy/test.env.example /etc/payathon-test/app.env
+fi
 test ! -e /opt/payathon-test/current || test -L /opt/payathon-test/current
 ln -sfn "$release" /opt/payathon-test/current
 install -m 644 deploy/payathon-test.service /etc/systemd/system/payathon-test.service

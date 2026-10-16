@@ -5,8 +5,9 @@ import { dispatchCode, verifyProviderCode, SmsDeliveryError } from './sms.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const safeEqual = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const id = () => randomUUID();
-export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode, smsTimeoutMs = 8000, testAccounts = [] } = {}) {
+export function createService(store, { clock = () => new Date(), smsMode = 'development', deliverCode, smsTimeoutMs = 8000, smsDailyLimit, testAccounts = [] } = {}) {
   if (!Number.isInteger(smsTimeoutMs) || smsTimeoutMs < 1 || smsTimeoutMs > 15000) throw new Error('Invalid SMS timeout');
+  if (smsDailyLimit !== undefined && (!Number.isInteger(smsDailyLimit) || smsDailyLimit < 1 || smsDailyLimit > 20)) throw new Error('Invalid SMS daily limit');
   const { get, all, run, transaction } = store;
   const verifyingPhones = new Set();
   const remoteVerification = smsMode !== 'development' && typeof deliverCode?.verifyCode === 'function';
@@ -136,24 +137,28 @@ export function createService(store, { clock = () => new Date(), smsMode = 'deve
       ensure(!verifyingPhones.has(body.phone), 'AUTH_IN_PROGRESS', '正在核验，请稍候再获取', 409);
       limit('sms-ip:' + hash(ip), 20, 3600);
       const old = get('SELECT * FROM otp WHERE phone=?', body.phone);
-      ensure(!old || now().getTime() - old.sent_at >= 60000, 'RATE_LIMITED', '请在 60 秒后重新获取', 429);
+      const retryAfter = old ? Math.max(0, Math.ceil((old.sent_at + 60000 - now().getTime()) / 1000)) : 0;
+      ensure(!retryAfter, 'RATE_LIMITED', `请在 ${retryAfter} 秒后重新获取`, 429, { retryAfter });
       limit('sms-phone:' + hash(body.phone), 10, 86400);
+      if (smsDailyLimit !== undefined) limit('sms-global:' + today(), smsDailyLimit, 86400);
       const dispatchId = id(), code = remoteVerification ? undefined : String(randomInt(100000, 1000000));
+      const sentAt = now().getTime(), remainingCooldown = () => Math.max(0, Math.ceil((sentAt + 60000 - now().getTime()) / 1000));
       // Persist the verification method in the existing opaque credential column.
       // This marker can never match a local SHA256 hash, including after a restart.
       const codeHash = remoteVerification ? 'pnvs:' + dispatchId : hash(body.phone + ':' + code);
-      run('INSERT OR REPLACE INTO otp(phone,code_hash,expires_at,sent_at,attempts,delivery_state,dispatch_id) VALUES(?,?,?,?,0,?,?)', body.phone, codeHash, now().getTime() + 300000, now().getTime(), smsMode === 'development' ? 'DEVELOPMENT' : 'PENDING', dispatchId);
+      run('INSERT OR REPLACE INTO otp(phone,code_hash,expires_at,sent_at,attempts,delivery_state,dispatch_id) VALUES(?,?,?,?,0,?,?)', body.phone, codeHash, sentAt + 300000, sentAt, smsMode === 'development' ? 'DEVELOPMENT' : 'PENDING', dispatchId);
       if (smsMode !== 'development') {
         try { await dispatchCode(deliverCode, { phone: body.phone, code, dispatchId }, smsTimeoutMs); }
         catch (error) {
           const state = error instanceof SmsDeliveryError && error.outcome === 'FAILED' ? 'FAILED' : 'UNKNOWN';
           run("UPDATE otp SET delivery_state=? WHERE phone=? AND dispatch_id=? AND delivery_state='PENDING'", state, body.phone, dispatchId);
-          ensure(false, state === 'FAILED' ? 'SMS_UNAVAILABLE' : 'SMS_DELIVERY_UNKNOWN', state === 'FAILED' ? '短信发送失败，请稍后重试' : '短信发送结果暂未确认，请在 60 秒后重新获取', 503);
+          const balance = error instanceof SmsDeliveryError && error.reason === 'BALANCE';
+          ensure(false, balance ? 'SMS_BALANCE_INSUFFICIENT' : state === 'FAILED' ? 'SMS_UNAVAILABLE' : 'SMS_DELIVERY_UNKNOWN', balance ? '短信服务余额或套餐额度不足，请开发者检查阿里云账单后再试' : state === 'FAILED' ? '短信发送失败，请稍后重试' : '短信发送结果暂未确认，请稍后重新获取', 503, { retryAfter: remainingCooldown() });
         }
         const changed = run("UPDATE otp SET delivery_state='ACCEPTED' WHERE phone=? AND dispatch_id=? AND delivery_state='PENDING' AND expires_at>?", body.phone, dispatchId, now().getTime());
         ensure(changed.changes === 1, 'SMS_DELIVERY_UNKNOWN', '短信发送结果暂未确认，请重新获取', 503);
       }
-      return { retryAfter: 60, expiresIn: 300, deliveryStatus: smsMode === 'development' ? 'DEVELOPMENT' : 'ACCEPTED', ...(smsMode === 'development' ? { developmentCode: code, message: '本地测试验证码，未发送短信' } : { message: '短信请求已受理，请留意手机验证码' }) };
+      return { retryAfter: remainingCooldown(), expiresIn: 300, deliveryStatus: smsMode === 'development' ? 'DEVELOPMENT' : 'ACCEPTED', ...(smsMode === 'development' ? { developmentCode: code, message: '本地测试验证码，未发送短信' } : { message: '短信请求已受理，请留意手机验证码' }) };
     },
     login(body, ip) {
       ensure(typeof body.phone === 'string' && /^1[3-9]\d{9}$/.test(body.phone) && typeof body.code === 'string' && /^\d{6}$/.test(body.code), 'INVALID_CODE', '验证码无效或已过期', 401);

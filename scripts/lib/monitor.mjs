@@ -40,15 +40,15 @@ export function probeCertificate(origin) {
   });
 }
 
-export async function collectStatus({ publicOrigin, backupRoot, databaseDirectory }) {
+export async function collectStatus({ publicOrigin, backupRoot, databaseDirectory, expectedMode = 'test' }) {
   const units = ['payathon-test.service', 'nginx.service', 'payathon-cert-renew.timer', 'payathon-backup.timer', 'payathon-monitor.timer'];
   const services = spawnSync('systemctl', ['is-active', ...units], { encoding: 'utf8', timeout: 5000 });
   const backupJob = spawnSync('systemctl', ['show', 'payathon-backup.service', '--property=Result', '--value'], { encoding: 'utf8', timeout: 5000 });
   const journal = spawnSync('journalctl', ['-u', 'payathon-test.service', '--since', '6 minutes ago', '-o', 'cat', '--no-pager', '-n', '1000'], { encoding: 'utf8', timeout: 5000 });
   const applicationErrors = journal.status === 0 ? journal.stdout.split('\n').filter(line => /"error"\s*:|Expiration job failed/.test(line)).length : null;
   const [localHealth, publicHealth, certificateHours] = await Promise.all([
-    probeHealth('http://127.0.0.1:4181/api/v1/health'),
-    probeHealth(new URL('/api/v1/health', publicOrigin)),
+    probeHealth('http://127.0.0.1:4181/api/v1/health', expectedMode),
+    probeHealth(new URL('/api/v1/health', publicOrigin), expectedMode),
     probeCertificate(publicOrigin)
   ]);
   let backupAgeHours = null, backupVerified = false;

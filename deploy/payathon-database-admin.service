@@ -1,0 +1,23 @@
+[Unit]
+Description=Private Payathon SQLite visual administration
+After=network.target payathon-test.service
+
+[Service]
+Type=simple
+User=payathon-test
+Group=payathon-test
+WorkingDirectory=/opt/payathon-tools/database-admin
+EnvironmentFile=/etc/payathon-database-admin.env
+ExecStart=/opt/payathon-tools/sqlite-web-venv/bin/python /opt/payathon-tools/database-admin/server.py -H 127.0.0.1 -p 8088 -P -f -q -x /var/lib/payathon-test/phone-trial.sqlite
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/payathon-test
+InaccessiblePaths=/etc/payathon-test /var/backups/payathon-test /var/lib/payathon-test/phone-trial.sqlite.deletions.sqlite /var/lib/payathon-test/test.sqlite /var/lib/payathon-test/test.sqlite.deletions.sqlite
+
+[Install]
+WantedBy=multi-user.target

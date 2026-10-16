@@ -7,7 +7,7 @@ import { isIP } from 'node:net';
 import { openStore } from './store.mjs';
 import { createService } from './service.mjs';
 import { AppError, ensure } from '../../packages/contracts/index.mjs';
-import { loadRuntime, validateTestConfig } from './runtime.mjs';
+import { loadRuntime, validateTestConfig, validatePublicOrigin } from './runtime.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const staticFiles = { '/': ['apps/web/index.html', 'text/html'], '/app.js': ['apps/web/app.js', 'text/javascript'], '/request.mjs': ['apps/web/request.mjs', 'text/javascript'], '/styles.css': ['apps/web/styles.css', 'text/css'], '/packages/domain/index.mjs': ['packages/domain/index.mjs', 'text/javascript'], '/packages/contracts/index.mjs': ['packages/contracts/index.mjs', 'text/javascript'] };
 async function jsonBody(req) {
@@ -17,14 +17,19 @@ async function jsonBody(req) {
   try { const data = JSON.parse(raw || '{}'); ensure(data && typeof data === 'object' && !Array.isArray(data), 'INVALID_JSON', '请求格式不正确'); return data; } catch (e) { if (e instanceof AppError) throw e; throw new AppError('INVALID_JSON', '请求格式不正确'); }
 }
 const sessionToken = req => req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('cq_session='))?.slice(11);
-export function createApplication({ databasePath = ':memory:', deletionJournalPath, readOnlyJournal = false, clock, smsMode = 'development', deliverCode, smsTimeoutMs, mode = 'local', publicOrigin, testAccounts = [] } = {}) {
-  if (!['local', 'test'].includes(mode)) throw new Error('Unsupported application mode');
+export function createApplication({ databasePath = ':memory:', deletionJournalPath, readOnlyJournal = false, clock, smsMode = 'development', deliverCode, smsTimeoutMs, smsDailyLimit, mode = 'local', publicOrigin, testAccounts = [] } = {}) {
+  if (!['local', 'test', 'sms-trial'].includes(mode)) throw new Error('Unsupported application mode');
   if (mode === 'test') publicOrigin = validateTestConfig(publicOrigin, testAccounts);
+  if (mode === 'sms-trial') {
+    publicOrigin = validatePublicOrigin(publicOrigin);
+    if (smsMode !== 'provider' || typeof deliverCode?.verifyCode !== 'function' || !Number.isInteger(smsDailyLimit) || smsDailyLimit < 1 || smsDailyLimit > 20) throw new Error('SMS trial requires remote verification and a bounded daily budget.');
+  }
+  const online = mode !== 'local';
   const store = openStore(databasePath, { deletionJournalPath, readOnlyJournal });
   let service;
-  try { service = createService(store, { clock, smsMode: mode === 'test' ? 'test' : smsMode, deliverCode, smsTimeoutMs, testAccounts: mode === 'test' ? testAccounts : [] }); }
+  try { service = createService(store, { clock, smsMode: mode === 'test' ? 'test' : smsMode, deliverCode, smsTimeoutMs, smsDailyLimit, testAccounts: mode === 'test' ? testAccounts : [] }); }
   catch (error) { store.close(); throw error; }
-  const cookie = token => `cq_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${token ? 604800 : 0}${mode === 'test' ? '; Secure' : ''}`;
+  const cookie = token => `cq_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${token ? 604800 : 0}${online ? '; Secure' : ''}`;
   const server = http.createServer(async (req, res) => {
     const requestId = randomUUID();
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin');
@@ -36,7 +41,7 @@ export function createApplication({ databasePath = ':memory:', deletionJournalPa
       const url = new URL(req.url, 'http://localhost');
       const host = req.headers.host || '';
       const localHost = /^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host);
-      ensure(mode === 'test' ? host === new URL(publicOrigin).host || (localHost && url.pathname === '/api/v1/health') : localHost, 'HOST_REJECTED', '访问地址不受支持', 403);
+      ensure(online ? host === new URL(publicOrigin).host || (localHost && url.pathname === '/api/v1/health') : localHost, 'HOST_REJECTED', '访问地址不受支持', 403);
       if (!url.pathname.startsWith('/api/')) {
         ensure(req.method === 'GET' || req.method === 'HEAD', 'METHOD_NOT_ALLOWED', '请求方式不支持', 405);
         const file = staticFiles[url.pathname]; ensure(file, 'NOT_FOUND', '页面不存在', 404);
@@ -46,7 +51,7 @@ export function createApplication({ databasePath = ':memory:', deletionJournalPa
       const write = !['GET', 'HEAD'].includes(req.method);
       if (write) {
         ensure(req.headers['x-app-request'] === '1', 'CSRF_REJECTED', '请求来源无效', 403);
-        if (req.headers.origin) ensure(req.headers.origin === (mode === 'test' ? publicOrigin : 'http://' + host), 'CSRF_REJECTED', '请求来源无效', 403);
+        if (req.headers.origin) ensure(req.headers.origin === (online ? publicOrigin : 'http://' + host), 'CSRF_REJECTED', '请求来源无效', 403);
         ensure(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), 'CSRF_REJECTED', '请求来源无效', 403);
       }
       const body = write ? await jsonBody(req) : {}, key = req.headers['idempotency-key'];
@@ -54,9 +59,9 @@ export function createApplication({ databasePath = ':memory:', deletionJournalPa
       service.expire();
       const route = req.method + ' ' + url.pathname, remote = req.socket.remoteAddress || 'local';
       const forwarded = req.headers['x-forwarded-for'];
-      const ip = mode === 'test' && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote) && typeof forwarded === 'string' && isIP(forwarded) ? forwarded : remote;
-      if (route === 'GET /api/v1/health') { send({ ok: true, storage: store.get('SELECT 1 ok').ok === 1, mode: mode === 'test' ? 'test' : smsMode }); return; }
-      if (route === 'GET /api/v1/config') { send({ mode, login: mode === 'test' ? 'test-code' : 'phone', syntheticOnly: mode === 'test' }); return; }
+      const ip = online && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote) && typeof forwarded === 'string' && isIP(forwarded) ? forwarded : remote;
+      if (route === 'GET /api/v1/health') { send({ ok: true, storage: store.get('SELECT 1 ok').ok === 1, mode: online ? mode : smsMode }); return; }
+      if (route === 'GET /api/v1/config') { send({ mode, login: mode === 'test' ? 'test-code' : 'phone', syntheticOnly: online, ...(mode === 'sms-trial' ? { realSms: true, smsDailyLimit } : {}) }); return; }
       if (route === 'POST /api/v1/auth/test-login') {
         ensure(mode === 'test', 'NOT_FOUND', '接口不存在', 404);
         const result = service.testLogin(body, ip); res.setHeader('Set-Cookie', cookie(result.token)); send({ user: result.user }); return;
@@ -109,6 +114,6 @@ export function createApplication({ databasePath = ':memory:', deletionJournalPa
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const config = loadRuntime(), app = createApplication(config);
-  app.server.listen(Number(process.env.PORT || (config.mode === 'test' ? 4181 : 4180)), config.host, () => console.log(`上秤 · ${config.mode === 'test' ? '合成数据联机测试 ' + config.publicOrigin : '本地开发 http://' + config.host + ':' + app.server.address().port}`));
+  app.server.listen(Number(process.env.PORT || (config.mode !== 'local' ? 4181 : 4180)), config.host, () => console.log(`上秤 · ${config.mode === 'local' ? '本地开发 http://' + config.host + ':' + app.server.address().port : (config.mode === 'sms-trial' ? '手机短信试用 ' : '合成数据联机测试 ') + config.publicOrigin}`));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, async () => { await app.close(); process.exit(0); });
 }

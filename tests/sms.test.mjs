@@ -68,6 +68,15 @@ test('restart converts abandoned pending dispatch to unknown, expiry removes all
   f.time.value = new Date(f.time.value.getTime() + 300000); f.api.expire();
   assert.equal(f.store.get('SELECT count(*) n FROM otp').n, 0);
 });
+
+test('SMS cooldown rejection reports actual remaining seconds rather than always resetting to sixty', async t => {
+  const f = setup(t, () => ({ status: 'ACCEPTED' }));
+  await f.api.requestCode({ phone }, 'one');
+  f.time.value = new Date(f.time.value.getTime() + 13500);
+  await assert.rejects(f.api.requestCode({ phone }, 'one'), error => error.code === 'RATE_LIMITED' && error.details.retryAfter === 47 && error.message.includes('47'));
+  f.time.value = new Date(f.time.value.getTime() + 46500);
+  assert.equal((await f.api.requestCode({ phone }, 'one')).deliveryStatus, 'ACCEPTED');
+});
 const config = { accessKeyId: 'test-id', accessKeySecret: 'test-secret', signName: '测试签名', templateCode: 'SMS_123456' };
 test('ACS3 authorization matches the official fixed-parameter signature example', () => {
   // https://help.aliyun.com/zh/sdk/product-overview/v3-request-structure-and-signature
