@@ -65,6 +65,19 @@ test('HTTP errors preserve machine code, business date and account deletion revo
 });
 
 const roomDraft = { name: '', intro: '', days: 14, intensity: '低', sharingConsent: true };
+test('POST profile compatibility preserves authorization, consent and cross-method idempotency', async t => {
+  const { request, account } = await setup(t), client = await account('13850000002');
+  const body = { nickname: 'Eden', avatar: '🐱' }, key = randomUUID();
+  assert.equal((await request('/me/profile', { method: 'POST', body })).status, 401);
+  assert.equal((await request('/me/profile', { method: 'POST', body, client, headers: { 'X-CSRF-Token': 'wrong' } })).status, 403);
+  assert.equal((await request('/me/profile', { method: 'POST', body, client, headers: { Origin: 'https://attacker.example' } })).status, 403);
+  assert.equal((await request('/me/profile', { method: 'POST', body, client, key })).status, 200);
+  assert.equal((await request('/me', { method: 'PATCH', body, client, key })).status, 200);
+  const me = (await request('/me', { client })).data.user;
+  assert.equal(me.nickname, 'Eden'); assert.equal(me.avatar, '🐱'); assert.equal(me.consent, true);
+  assert.equal((await request('/me/profile', { method: 'POST', body: { ...body, nickname: '' }, client })).status, 400);
+  assert.equal((await request('/me/profile', { method: 'POST', body, client, key })).status, 200);
+});
 async function lobby(f, users) {
   const created = await f.request('/rooms', { method: 'POST', body: roomDraft, client: users[0] });
   assert.equal(created.status, 200);

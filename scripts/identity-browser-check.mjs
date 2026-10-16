@@ -26,8 +26,8 @@ try {
   assert.equal(await page.locator('[data-avatar-preview]').textContent(), '🍊');
   // A failed request must preserve the draft and selection for retry.
   let failOnce = true;
-  await page.route('**/api/v1/me', async route => {
-    if (route.request().method() === 'PATCH' && failOnce) { failOnce = false; await route.abort(); }
+  await page.route('**/api/v1/me/profile', async route => {
+    if (route.request().method() === 'POST' && failOnce) { failOnce = false; await route.abort(); }
     else await route.continue();
   });
   await page.getByRole('button', { name: '保存名片', exact: true }).click();

@@ -78,7 +78,7 @@ export function createApplication({ databasePath = ':memory:', deletionJournalPa
       const token = sessionToken(req), user = service.authenticate(token);
       if (write) ensure(req.headers['x-csrf-token'] === user.csrf, 'CSRF_REJECTED', '会话已变化，请刷新后重试', 403);
       if (route === 'GET /api/v1/me') send(service.me(user));
-      else if (route === 'PATCH /api/v1/me') send(service.updateProfile(user, body, key));
+      else if (route === 'PATCH /api/v1/me' || route === 'POST /api/v1/me/profile') send(service.updateProfile(user, body, key));
       else if (route === 'POST /api/v1/auth/logout') { service.logout(token); res.setHeader('Set-Cookie', cookie('')); send({ ok: true }); }
       else if (route === 'POST /api/v1/rooms') send(service.createRoom(user, body, key));
       else if (invite && req.method === 'POST') send(service.joinRoom(user, invite[1], body, key));

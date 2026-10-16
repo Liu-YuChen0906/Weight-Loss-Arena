@@ -15,7 +15,7 @@
 | `POST /auth/login` | `{phone,code}`；一次使用、最多 5 次尝试，返回当前用户及 CSRF，签发 Cookie |
 | `POST /auth/logout` | 撤销当前会话 |
 | `GET /me` | 脱敏手机号、稳定用户 ID、昵称、同意状态、当前小组、服务端日期 |
-| `PATCH /me` | `{nickname,avatar?,adult?,sensitiveConsent?}`；首次同意须两个 true，已同意用户编辑名片不重签；昵称非空且最多 20 字符，avatar 限共享 AVATARS 列表，省略保留原值 |
+| `POST /me/profile`（兼容保留 `PATCH /me`） | `{nickname,avatar?,adult?,sensitiveConsent?}`；首次同意须两个 true，已同意用户编辑名片不重签；昵称非空且最多 20 字符，avatar 限共享 AVATARS 列表，省略保留原值 |
 | `POST /rooms` | `{name,intro,days,intensity,extremeConfirmed?,sharingConsent:true}`；确认提交才建房 |
 | `GET /invites/:code` | 只返回名称、介绍、人数、周期、强度、状态、剩余天数及版本，无身体数据 |
 | `POST /invites/:code` | 组队阶段只需共享确认；进行中另需 `{height,weight,date,version}`，加入与准备原子提交 |
@@ -90,4 +90,4 @@
 
 ## 2026-10-16 昵称与 emoji 头像
 
-`GET /me` 的 user、`GET /rooms/:id` 的成员和本人导出的 user 均包含 `avatar`。数据库结构版本 3 为 users 新增 avatar，旧账号默认 🌱，保留原昵称、同意时间、会话及关联数据。`PATCH /me` 沿用鉴权、CSRF 与幂等写入；未完成当前版本同意者仍须明确确认年龄和数据使用。
+`GET /me` 的 user、`GET /rooms/:id` 的成员和本人导出的 user 均包含 `avatar`。数据库结构版本 3 为 users 新增 avatar，旧账号默认 🌱，保留原昵称、同意时间、会话及关联数据。`POST /me/profile` 与兼容保留的 `PATCH /me` 共用 profile 操作及幂等回执，沿用鉴权、CSRF 与幂等写入；未完成当前版本同意者仍须明确确认年龄和数据使用。
