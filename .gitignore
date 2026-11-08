@@ -1,8 +1,42 @@
-.DS_Store
+# Local toolchains, dependencies and build output
+/.tools/
+.m2/
+.pnpm-store/
 node_modules/
-.env
-var/
+target/
+dist/
 coverage/
-test-results/
+*.tsbuildinfo
+
+# Local environment files and private keys
+.env
 .env.*
 !.env.example
+.envrc
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Runtime data, deployment packages and local verification evidence
+/var/
+/java-rebuild/evidence/
+*.log
+*.pid
+*.sql.gz
+*.sql.zst
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Editor, OS and Python cache files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+__pycache__/
+*.pyc
+.venv/

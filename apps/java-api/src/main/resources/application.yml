@@ -1,0 +1,66 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  servlet:
+    session:
+      timeout: 7d
+      cookie:
+        name: cq_session
+        http-only: true
+        same-site: strict
+        secure: ${COOKIE_SECURE:false}
+spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  application:
+    name: shangcheng-java
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/shangcheng_java_local?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true}
+    username: ${DB_USER:shangcheng}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+      timeout: 2s
+  session:
+    store-type: redis
+    redis:
+      namespace: shangcheng:java:${APP_MODE:local}:session
+      repository-type: indexed
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5673}
+    username: ${RABBITMQ_USER:shangcheng}
+    password: ${RABBITMQ_PASSWORD:unused-m1}
+    virtual-host: shangcheng-java
+    listener:
+      simple:
+        auto-startup: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-trailing-tokens: true
+app:
+  mode: ${APP_MODE:local}
+  origin: ${APP_ORIGIN:http://localhost:5173}
+  journal-path: ${JOURNAL_PATH:./var/privacy-journal}
+  instance-id: ${INSTANCE_ID:local-1}
+  test-codes: ${TEST_CODES:}
+  expose-instance: ${EXPOSE_INSTANCE:false}
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:true}
+logging:
+  level:
+    root: WARN
+    team.shangcheng: INFO
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    local-cache-scope: statement

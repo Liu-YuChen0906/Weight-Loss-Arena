@@ -1,0 +1,8 @@
+.tools
+.git
+**/node_modules
+**/target
+**/dist
+**/.env
+var
+java-rebuild/evidence

@@ -1,0 +1,400 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-29",
+  "scope": "SYNTHETIC_DOMAIN_BASELINE",
+  "source": "packages/domain/index.mjs",
+  "notes": [
+    "Generated from the current Node pure domain functions; not Java test results.",
+    "Preparation display points must not be passed as records to stats."
+  ],
+  "goals": [
+    {
+      "input": {
+        "height": 175,
+        "weight": 80,
+        "days": 14,
+        "intensity": "中"
+      },
+      "expected": {
+        "target": 78.29,
+        "loss": 1.71,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    },
+    {
+      "input": {
+        "height": 175,
+        "weight": 80,
+        "days": 28,
+        "intensity": "中"
+      },
+      "expected": {
+        "target": 77.15,
+        "loss": 2.85,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    },
+    {
+      "input": {
+        "height": 175,
+        "weight": 80,
+        "days": 56,
+        "intensity": "中"
+      },
+      "expected": {
+        "target": 74.87,
+        "loss": 5.13,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    },
+    {
+      "input": {
+        "height": 250,
+        "weight": 20,
+        "days": 28,
+        "intensity": "低"
+      },
+      "expected": {
+        "target": 19.7,
+        "loss": 0.3,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    },
+    {
+      "input": {
+        "height": 80,
+        "weight": 300,
+        "days": 28,
+        "intensity": "低"
+      },
+      "expected": {
+        "target": 292.5,
+        "loss": 7.5,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    },
+    {
+      "input": {
+        "height": 168,
+        "weight": 70,
+        "days": 90,
+        "intensity": "极高"
+      },
+      "expected": {
+        "target": 59.74,
+        "loss": 10.26,
+        "algorithm": "bmi22-piecewise-v1"
+      }
+    }
+  ],
+  "timeFactors": [
+    {
+      "days": 14,
+      "expected": 0.6
+    },
+    {
+      "days": 21,
+      "expected": 0.8
+    },
+    {
+      "days": 28,
+      "expected": 1
+    },
+    {
+      "days": 42,
+      "expected": 1.4
+    },
+    {
+      "days": 56,
+      "expected": 1.8
+    },
+    {
+      "days": 73,
+      "expected": 2.2
+    },
+    {
+      "days": 90,
+      "expected": 2.6
+    }
+  ],
+  "dates": [
+    {
+      "timestamp": "2026-10-13T15:59:59Z",
+      "expected": "2026-10-13"
+    },
+    {
+      "timestamp": "2026-10-13T16:00:00Z",
+      "expected": "2026-10-14"
+    }
+  ],
+  "weights": [
+    {
+      "input": {
+        "weight": 140,
+        "unit": "jin"
+      },
+      "expected": 70
+    },
+    {
+      "input": {
+        "weight": 70,
+        "unit": "kg"
+      },
+      "expected": 70
+    },
+    {
+      "input": {
+        "weight": 70.005,
+        "unit": "kg"
+      },
+      "expected": 70.01
+    }
+  ],
+  "statistics": [
+    {
+      "id": "missing_day",
+      "room": {
+        "start_date": "2026-10-01",
+        "days": 28
+      },
+      "member": {
+        "join_date": "2026-10-01"
+      },
+      "records": [
+        {
+          "date": "2026-10-01",
+          "weight": 70
+        },
+        {
+          "date": "2026-10-03",
+          "weight": 69.5
+        }
+      ],
+      "today": "2026-10-03",
+      "range": 28,
+      "expected": {
+        "start": "2026-10-01",
+        "anchor": "2026-10-03",
+        "count": 2,
+        "denominator": 3,
+        "coverage": 66.67,
+        "first": 70,
+        "latest": {
+          "date": "2026-10-03",
+          "weight": 69.5
+        },
+        "change": -0.5,
+        "rows": [
+          {
+            "date": "2026-10-01",
+            "weight": 70,
+            "change": 0,
+            "percent": 0
+          },
+          {
+            "date": "2026-10-03",
+            "weight": 69.5,
+            "change": -0.5,
+            "percent": -0.71
+          }
+        ]
+      }
+    },
+    {
+      "id": "period_baseline_in_7day_range",
+      "room": {
+        "start_date": "2026-10-01",
+        "days": 28
+      },
+      "member": {
+        "join_date": "2026-10-01"
+      },
+      "records": [
+        {
+          "date": "2026-10-01",
+          "weight": 70
+        },
+        {
+          "date": "2026-10-22",
+          "weight": 69
+        },
+        {
+          "date": "2026-10-28",
+          "weight": 68.5
+        }
+      ],
+      "today": "2026-10-30",
+      "range": 7,
+      "expected": {
+        "start": "2026-10-22",
+        "anchor": "2026-10-28",
+        "count": 2,
+        "denominator": 7,
+        "coverage": 28.57,
+        "first": 70,
+        "latest": {
+          "date": "2026-10-28",
+          "weight": 68.5
+        },
+        "change": -1.5,
+        "rows": [
+          {
+            "date": "2026-10-22",
+            "weight": 69,
+            "change": -1,
+            "percent": -1.43
+          },
+          {
+            "date": "2026-10-28",
+            "weight": 68.5,
+            "change": -1.5,
+            "percent": -2.14
+          }
+        ]
+      }
+    },
+    {
+      "id": "late_join_single_record",
+      "room": {
+        "start_date": "2026-10-01",
+        "days": 28
+      },
+      "member": {
+        "join_date": "2026-10-03"
+      },
+      "records": [
+        {
+          "date": "2026-10-03",
+          "weight": 70
+        }
+      ],
+      "today": "2026-10-03",
+      "range": 28,
+      "expected": {
+        "start": "2026-10-03",
+        "anchor": "2026-10-03",
+        "count": 1,
+        "denominator": 1,
+        "coverage": 100,
+        "first": 70,
+        "latest": {
+          "date": "2026-10-03",
+          "weight": 70
+        },
+        "change": null,
+        "rows": [
+          {
+            "date": "2026-10-03",
+            "weight": 70,
+            "change": 0,
+            "percent": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "no_actual_records",
+      "room": {
+        "start_date": "2026-10-01",
+        "days": 28
+      },
+      "member": {
+        "join_date": "2026-10-01"
+      },
+      "records": [],
+      "today": "2026-10-03",
+      "range": 28,
+      "expected": {
+        "start": "2026-10-01",
+        "anchor": "2026-10-03",
+        "count": 0,
+        "denominator": 3,
+        "coverage": 0,
+        "first": null,
+        "latest": null,
+        "change": null,
+        "rows": []
+      }
+    }
+  ],
+  "ranking": {
+    "input": [
+      {
+        "joined_order": 1,
+        "summary": {
+          "count": 2,
+          "denominator": 3
+        }
+      },
+      {
+        "joined_order": 2,
+        "summary": {
+          "count": 4,
+          "denominator": 6
+        }
+      },
+      {
+        "joined_order": 3,
+        "summary": {
+          "count": 1,
+          "denominator": 3
+        }
+      }
+    ],
+    "expectedRanks": [1, 1, 3]
+  },
+  "invalid": [
+    {
+      "id": "fractional_days",
+      "input": {
+        "height": 175,
+        "weight": 80,
+        "days": 14.5,
+        "intensity": "低"
+      },
+      "operation": "calculateGoal",
+      "expectedError": {
+        "code": "VALIDATION",
+        "status": 400
+      }
+    },
+    {
+      "id": "below_weight_range",
+      "input": {
+        "weight": 19.999,
+        "unit": "kg"
+      },
+      "operation": "normalizeWeight",
+      "expectedError": {
+        "code": "VALIDATION",
+        "status": 400
+      }
+    },
+    {
+      "id": "above_weight_range",
+      "input": {
+        "weight": 300.001,
+        "unit": "kg"
+      },
+      "operation": "normalizeWeight",
+      "expectedError": {
+        "code": "VALIDATION",
+        "status": 400
+      }
+    },
+    {
+      "id": "string_height",
+      "input": {
+        "height": "175",
+        "weight": 80,
+        "days": 14,
+        "intensity": "低"
+      },
+      "operation": "calculateGoal",
+      "expectedError": {
+        "code": "VALIDATION",
+        "status": 400
+      }
+    }
+  ]
+}

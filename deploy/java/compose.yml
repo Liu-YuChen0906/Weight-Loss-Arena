@@ -1,0 +1,83 @@
+name: shangcheng-java
+services:
+  mysql:
+    image: mysql:8.4.7
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Run scripts/java/configure.py first}
+      MYSQL_DATABASE: shangcheng_java_local
+      MYSQL_USER: shangcheng
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Run scripts/java/configure.py first}
+    ports: ['127.0.0.1:3307:3306']
+    volumes:
+      - business-and-journal:/var/lib/mysql
+      - ./init-journal.sql:/docker-entrypoint-initdb.d/10-journal.sql:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u shangcheng -D shangcheng_java_local -e 'SELECT 1'",
+        ]
+      interval: 5s
+      timeout: 4s
+      retries: 40
+  redis:
+    image: redis:7.4.6-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports: ['127.0.0.1:6380:6379']
+    volumes: ['sessions:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  rabbitmq:
+    image: rabbitmq:4.1.5-alpine
+    profiles: ['m2']
+    environment:
+      RABBITMQ_DEFAULT_USER: shangcheng
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run scripts/java/configure.py first}
+      RABBITMQ_DEFAULT_VHOST: shangcheng-java
+    ports: ['127.0.0.1:5673:5672']
+    volumes: ['mq:/var/lib/rabbitmq']
+  api-1: &api
+    build:
+      context: ../..
+      dockerfile: deploy/java/api.Dockerfile
+    environment: &api-env
+      DB_URL: jdbc:mysql://mysql:3306/shangcheng_java_local?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      DB_USER: shangcheng
+      DB_PASSWORD: ${DB_PASSWORD}
+      JOURNAL_DB_URL: jdbc:mysql://mysql:3306/shangcheng_java_journal?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      APP_MODE: local
+      APP_ORIGIN: http://localhost:8088
+      EXPOSE_INSTANCE: 'true'
+      INSTANCE_ID: java-1
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ['127.0.0.1:8080:8080']
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:8080/api/v1/health']
+      interval: 10s
+      timeout: 8s
+      retries: 20
+  api-2:
+    <<: *api
+    environment:
+      <<: *api-env
+      INSTANCE_ID: java-2
+    ports: ['127.0.0.1:8081:8080']
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/java/web.Dockerfile
+    ports: ['127.0.0.1:8088:80']
+    depends_on:
+      api-1: { condition: service_healthy }
+      api-2: { condition: service_healthy }
+volumes:
+  business-and-journal:
+  sessions:
+  mq:
